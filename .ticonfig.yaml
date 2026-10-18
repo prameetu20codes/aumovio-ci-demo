@@ -5,6 +5,7 @@ config:
     - "docs/**/*"
     - ".ticonfig.yaml"
     - ".harness/**/*"
+    - "harness-manual/**/*"
     - "scripts/**/*"
     - "**/Dockerfile*"
     - "**/*.go"

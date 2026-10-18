@@ -12,12 +12,19 @@ aumovio-ci-demo/
 │   └── dashboard-api/      Node 20     HTTP API, Jest + jest-junit, ESLint          (39 tests)
 ├── scripts/ci/detect-changes.sh        monorepo change detection (sourced by the pipeline)
 ├── .ticonfig.yaml                      files Test Intelligence ignores
-└── .harness/
-    ├── pipelines/   aumovio_monorepo_ci.yaml            flat pipeline (import this first)
-    │                aumovio_monorepo_ci_templated.yaml  same flow built from templates
-    ├── templates/   go_ci_stage, java_maven_ci_stage, node_jest_ci_stage, trivy_scan_har_image
+├── .harness/                           auto-created by Harness Git Experience (see setup)
+│   └── orgs/testprameet/projects/testproj/
+│       ├── pipelines/
+│       │   ├── aumovio_monorepo_ci.yaml                  flat pipeline
+│       │   ├── aumovio_monorepo_ci_templated.yaml        same flow built from templates
+│       │   └── aumovio_monorepo_ci/input_sets/           manual_main_full_build, manual_pr_build
+│       └── templates/
+│           ├── trivy_scan_har_image/v1.yaml              step template
+│           ├── go_ci_stage/v1.yaml                       stage template
+│           ├── java_maven_ci_stage/v1.yaml               stage template
+│           └── node_jest_ci_stage/v1.yaml                stage template
+└── harness-manual/                     not supported by auto-creation, create these by hand
     ├── triggers/    pr_validation, pr_closed_ti_baseline, push_main (disabled)
-    ├── inputsets/   manual_main_full_build, manual_pr_build
     └── policies/    5 OPA policies (Rego)
 ```
 
@@ -57,45 +64,75 @@ Each language stage runs the same shape:
 | STO | Gitleaks, Semgrep, OsvScanner, AquaTrivy steps | Security Tests tab with deduplicated findings |
 | Conditional stages | `when.condition` on Detect Changes outputs | Change one service, only that stage runs |
 | Parallelism | `parallel:` stages and steps | Execution graph |
-| Templates | `.harness/templates/` | Adding a service = one templated stage |
-| OPA governance | `.harness/policies/` | Save a pipeline with `Ignore` or `node:latest` and see it blocked |
+| Templates | `.harness/orgs/testprameet/projects/testproj/templates/` | Adding a service = one templated stage |
+| OPA governance | `harness-manual/policies/` | Save a pipeline with `Ignore` or `node:latest` and see it blocked |
 | Failure strategies | Retry on Connectivity/Timeout, then fail | Robustness without hiding real failures |
-| Triggers | `.harness/triggers/` | PR opened → pipeline starts; new push auto-aborts the old run |
+| Triggers | `harness-manual/triggers/` | PR opened → pipeline starts; new push auto-aborts the old run |
 
 ## One-time setup in Harness
 
-Everything is at org `testprameet`, project `testproj`. Do these in order.
+Everything is created at org `testprameet`, project `testproj`. Pipelines, input sets and templates are
+**auto-created** by Harness Git Experience when their YAML lands on `main` under
+`.harness/orgs/testprameet/projects/testproj/...`
+([docs](https://developer.harness.io/harness-platform/use-harness-platform/git-experience/autocreation-of-entities)).
+They become remote entities: Harness reads them from Git, so later pushes to `main` update them.
+Triggers and OPA policies are not supported by auto-creation; they live in `harness-manual/` and are created by hand.
 
-1. **Push this folder to GitHub** as a repository named `aumovio-ci-demo` with default branch `main`:
-   ```bash
-   cd aumovio-ci-demo
-   git init -b main && git add . && git commit -m "Aumovio CI demo"
-   git remote add origin https://github.com/<your-org>/aumovio-ci-demo.git
-   git push -u origin main
-   ```
-2. **Check the GitHub connector.** The pipeline uses `connectorRef: harness_testing` (the identifier of the
+Do these in order.
+
+1. **Check the GitHub connector.** The YAML uses `connectorRef: harness_testing` (the identifier of the
    `harness-testing` connector). Open the connector and confirm:
    - The identifier. If it is different, replace `harness_testing` in the pipelines and triggers. If the connector lives at org or account level, use `org.harness_testing` or `account.harness_testing`.
    - The URL type. For an **account** URL keep `repoName: aumovio-ci-demo`. For a **repository** URL pointing at this repo, delete the `repoName` lines.
    - API access is enabled, so Harness can register webhooks and post PR status checks.
-3. **Create the Artifact Registry**: Artifact Registry → New Registry → Docker → identifier `aumovio-snapshot`.
+2. **Create the Artifact Registry**: Artifact Registry → New Registry → Docker → identifier `aumovio-snapshot`.
    A different name works too; change the `har_registry` pipeline variable.
-4. **Create two secrets** (Project Settings → Secrets → Text), used by Trivy to pull the image from HAR:
+3. **Create two secrets** (Project Settings → Secrets → Text), used by Trivy to pull the image from HAR:
    - `har_username`: the email of the Harness user or service account.
    - `har_api_token`: a Harness API token (PAT or service account token) for that identity with Artifact Registry view access.
-5. **Ask Harness support to enable `CI_ENABLE_RUNTESTV2_JS`** on the account. Jest Test Intelligence needs it.
+4. **Ask Harness support to enable `CI_ENABLE_RUNTESTV2_JS`** on the account. Jest Test Intelligence needs it.
    Without it the Node Test step still runs every test; it just doesn't select a subset.
-6. **Import the templates** (Project → Templates → New Template → Import from YAML / paste YAML), in this order:
-   `step_trivy_scan_har_image.yaml`, then `stage_go_ci.yaml`, `stage_java_maven_ci.yaml`, `stage_node_jest_ci.yaml`.
-7. **Create the pipelines.** Pipelines → Create → Inline → YAML view → paste
-   `aumovio_monorepo_ci.yaml`. Optionally do the same for `aumovio_monorepo_ci_templated.yaml`. If the
-   templated one shows a template-input warning, open it in Pipeline Studio and click **Reconcile**.
-8. **Create the triggers.** Pipeline → Triggers → New Trigger → GitHub → YAML view → paste `pr_validation.yaml`, then
-   `pr_closed_ti_baseline.yaml`. `push_main.yaml` is optional and disabled.
+5. **Push the code without the Harness entities first.** Create an empty GitHub repo `aumovio-ci-demo`, then:
+   ```bash
+   cd aumovio-ci-demo
+   git init -b main
+   git add . ':!.harness'
+   git commit -m "Aumovio CI demo: services and CI scripts"
+   git remote add origin https://github.com/<your-org>/aumovio-ci-demo.git
+   git push -u origin main
+   ```
+6. **Register a project-level webhook** so Harness sees pushes to `.harness/`:
+   Project `testproj` → Project Settings → Webhooks → New Webhook → connector `harness_testing`,
+   repository `aumovio-ci-demo`, folder `.harness`. It must be project scope to create project entities.
+7. **Push the entities in dependency order.** Only pushes to the default branch (`main`) are auto-created.
+   Templates have to exist before the pipelines that use them, and a pipeline before its input sets,
+   so push in four small commits:
+   ```bash
+   H=.harness/orgs/testprameet/projects/testproj
+
+   git add $H/templates/trivy_scan_har_image
+   git commit -m "Harness: Trivy step template" && git push
+
+   git add $H/templates/go_ci_stage $H/templates/java_maven_ci_stage $H/templates/node_jest_ci_stage
+   git commit -m "Harness: stage templates" && git push
+
+   git add $H/pipelines/aumovio_monorepo_ci.yaml $H/pipelines/aumovio_monorepo_ci_templated.yaml
+   git commit -m "Harness: pipelines" && git push
+
+   git add $H/pipelines/aumovio_monorepo_ci/input_sets
+   git commit -m "Harness: input sets" && git push
+   ```
+   After each push, check Project Settings → Webhooks → **Events**: each file should show as processed.
+   If something failed, open the event to see why, fix the YAML, and push again.
+   If the templated pipeline shows a template-input warning, open it in Pipeline Studio and click **Reconcile**.
+8. **Create the triggers by hand.** Pipeline `aumovio_monorepo_ci` → Triggers → New Trigger → GitHub → YAML view →
+   paste `harness-manual/triggers/pr_validation.yaml`, then `pr_closed_ti_baseline.yaml`. `push_main.yaml` is
+   optional and disabled. The triggers set `pipelineBranchName`, which remote pipelines need: PR triggers load
+   the pipeline YAML from the PR's target branch (`main`).
    If the connector has no API access, copy each trigger's webhook URL into GitHub → Settings → Webhooks
    (content type `application/json`, events: Pull requests).
-9. **Create the input sets** (Pipeline → Input Sets → New → YAML) from `.harness/inputsets/`.
-10. **Create the OPA policies** (Project Settings → Policies → New Policy). Create one policy per `.rego` file and test each in the policy editor. Then create a
+9. **Change the manual PR input set** if you plan to use it: it has a placeholder PR number `1`.
+10. **Create the OPA policies by hand** (Project Settings → Policies → New Policy). Create one policy per file in `harness-manual/policies/` and test each in the policy editor. Then create a
     policy set:
     - Entity type **Pipeline**, event **On Save** and a second set **On Run**.
     - Add all five policies with severity **Warn & continue** first. Switch to **Error & exit** once the

@@ -28,6 +28,7 @@ trigger:
             - Open
             - Reopen
             - Synchronize
+  pipelineBranchName: <+trigger.targetBranch>
   inputYaml: |
     pipeline:
       identifier: aumovio_monorepo_ci
