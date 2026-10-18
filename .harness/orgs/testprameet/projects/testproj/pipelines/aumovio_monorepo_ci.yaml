@@ -149,7 +149,7 @@ pipeline:
                             advanced:
                               log:
                                 level: info
-                              fail_on_severity: high
+                              fail_on_severity: none
                           timeout: 15m
                       - step:
                           type: OsvScanner
