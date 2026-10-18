@@ -5,7 +5,7 @@ pipeline:
   orgIdentifier: testprameet
   description: >-
     Same flow as aumovio_monorepo_ci, built from the go_ci_stage, java_maven_ci_stage and
-    node_jest_ci_stage stage templates. Adding a new service = adding one templated stage.
+    node_jest_ci_stage stage templates. Adding a new service = adding one templated stage. Managed in Git and auto-created by Harness Git Experience.
   tags:
     customer: aumovio
     module: ci

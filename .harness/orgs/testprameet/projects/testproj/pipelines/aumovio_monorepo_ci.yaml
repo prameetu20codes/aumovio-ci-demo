@@ -6,7 +6,7 @@ pipeline:
   description: >-
     End-to-end CI for the Aumovio monorepo (Go, Java/Maven, Node.js/Jest): change detection,
     Test Intelligence, Build Intelligence, Cache Intelligence, Docker layer caching, test
-    splitting, smoke tests, Harness Artifact Registry and STO security scans.
+    splitting, smoke tests, Harness Artifact Registry and STO security scans. Managed in Git and auto-created by Harness Git Experience.
   tags:
     customer: aumovio
     module: ci

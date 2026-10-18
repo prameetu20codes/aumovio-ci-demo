@@ -1,6 +1,7 @@
 inputSet:
   name: Manual - main, build everything
   identifier: manual_main_full_build
+  description: "Manual - main, build everything. Managed in Git and auto-created by Harness Git Experience."
   orgIdentifier: testprameet
   projectIdentifier: testproj
   tags:

@@ -1,6 +1,7 @@
 inputSet:
   name: Manual - PR build
   identifier: manual_pr_build
+  description: "Manual - PR build. Managed in Git and auto-created by Harness Git Experience."
   orgIdentifier: testprameet
   projectIdentifier: testproj
   tags:

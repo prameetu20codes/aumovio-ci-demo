@@ -8,7 +8,7 @@ template:
   description: >-
     Standard Go service build: Cache Intelligence (module + build + lint caches), golangci-lint,
     go vet, unit tests split across parallel steps, static binary, smoke test, Build and Push to
-    Harness Artifact Registry with Docker layer caching, Trivy container scan.
+    Harness Artifact Registry with Docker layer caching, Trivy container scan. Managed in Git and auto-created by Harness Git Experience.
   tags:
     customer: aumovio
     language: go

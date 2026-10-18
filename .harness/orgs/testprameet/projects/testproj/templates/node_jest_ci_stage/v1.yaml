@@ -8,7 +8,7 @@ template:
   description: >-
     Standard Node.js service build: Cache Intelligence (npm cache), ESLint, Jest with Test
     Intelligence, smoke test, Build and Push to Harness Artifact Registry with Docker layer
-    caching, Trivy container scan.
+    caching, Trivy container scan. Managed in Git and auto-created by Harness Git Experience.
   tags:
     customer: aumovio
     language: nodejs

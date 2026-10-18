@@ -8,7 +8,7 @@ template:
   description: >-
     Standard Maven service build: Cache Intelligence (~/.m2), Test Intelligence (Test step),
     Build Intelligence (Maven build cache), smoke test, Build and Push to Harness Artifact Registry
-    with Docker layer caching, Trivy container scan.
+    with Docker layer caching, Trivy container scan. Managed in Git and auto-created by Harness Git Experience.
   tags:
     customer: aumovio
     language: java
