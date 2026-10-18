@@ -3,10 +3,7 @@ pipeline:
   identifier: aumovio_monorepo_ci
   projectIdentifier: testproj
   orgIdentifier: testprameet
-  description: >-
-    End-to-end CI for the Aumovio monorepo (Go, Java/Maven, Node.js/Jest): change detection,
-    Test Intelligence, Build Intelligence, Cache Intelligence, Docker layer caching, test
-    splitting, smoke tests, Harness Artifact Registry and STO security scans. Managed in Git and auto-created by Harness Git Experience. Owned by the CI platform team.
+  description: "End-to-end CI for the Aumovio monorepo (Go, Java/Maven, Node.js/Jest): change detection, Test Intelligence, Build Intelligence, Cache Intelligence, Docker layer caching, test splitting, smoke tests, Harness Artifact Registry and STO security scans. Managed in Git and auto-created by Harness Git Experience. Owned by the CI platform team."
   tags:
     customer: aumovio
     module: ci
@@ -14,9 +11,10 @@ pipeline:
   properties:
     ci:
       codebase:
-        connectorRef: harness_testing
+        connectorRef: harnessiacm
         repoName: aumovio-ci-demo
         build: <+input>
+        sparseCheckout: []
   variables:
     - name: har_registry
       type: String
@@ -40,9 +38,6 @@ pipeline:
           webhookUrl: <+secrets.getValue("slack_ci_webhook")>
       enabled: false
   stages:
-    # -------------------------------------------------------------------------------------------
-    # Stage 1: decide which services need to build for this commit or pull request.
-    # -------------------------------------------------------------------------------------------
     - stage:
         name: Detect Changes
         identifier: detect_changes
@@ -105,11 +100,7 @@ pipeline:
                 - AllErrors
               action:
                 type: MarkAsFailure
-
     - parallel:
-        # -----------------------------------------------------------------------------------------
-        # Repo-wide security scans (STO built-in scanners). Runs once for the whole monorepo.
-        # -----------------------------------------------------------------------------------------
         - stage:
             name: Code Security
             identifier: code_security
@@ -194,10 +185,6 @@ pipeline:
                     - AllErrors
                   action:
                     type: MarkAsFailure
-
-        # -----------------------------------------------------------------------------------------
-        # Go swimlane: telemetry-ingest
-        # -----------------------------------------------------------------------------------------
         - stage:
             name: Go CI - telemetry-ingest
             identifier: go_ci
@@ -402,7 +389,7 @@ pipeline:
                 value: /harness/.cache/golangci-lint
               - name: GOFLAGS
                 type: String
-                value: -buildvcs=false
+                value: "-buildvcs=false"
             failureStrategies:
               - onFailure:
                   errors:
@@ -422,10 +409,6 @@ pipeline:
                     - AllErrors
                   action:
                     type: MarkAsFailure
-
-        # -----------------------------------------------------------------------------------------
-        # Java swimlane: fleet-service (Maven multi-module)
-        # -----------------------------------------------------------------------------------------
         - stage:
             name: Java CI - fleet-service
             identifier: java_ci
@@ -552,7 +535,7 @@ pipeline:
                 value: services/fleet-service
               - name: MAVEN_ARGS
                 type: String
-                value: -B -ntp -Dmaven.repo.local=/harness/.m2/repository
+                value: "-B -ntp -Dmaven.repo.local=/harness/.m2/repository"
             failureStrategies:
               - onFailure:
                   errors:
@@ -572,10 +555,6 @@ pipeline:
                     - AllErrors
                   action:
                     type: MarkAsFailure
-
-        # -----------------------------------------------------------------------------------------
-        # Node.js swimlane: dashboard-api (Jest)
-        # -----------------------------------------------------------------------------------------
         - stage:
             name: Node CI - dashboard-api
             identifier: node_ci
