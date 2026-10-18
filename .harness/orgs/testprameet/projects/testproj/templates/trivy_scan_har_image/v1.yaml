@@ -5,7 +5,7 @@ template:
   type: Step
   projectIdentifier: testproj
   orgIdentifier: testprameet
-  description: Scans a container image stored in Harness Artifact Registry with the STO Aqua Trivy built-in scanner. Fails on CRITICAL findings. Managed in Git and auto-created by Harness Git Experience.
+  description: Scans a container image stored in Harness Artifact Registry with the STO Aqua Trivy built-in scanner. Fails on CRITICAL findings. Managed in Git and auto-created by Harness Git Experience. Owned by the CI platform team.
   tags:
     customer: aumovio
   spec:
