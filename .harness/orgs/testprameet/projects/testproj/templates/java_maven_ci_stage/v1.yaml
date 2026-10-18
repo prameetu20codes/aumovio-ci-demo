@@ -43,8 +43,6 @@ template:
                   cd "$SERVICE_DIR"
                   mvn test -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
                 intelligenceMode: true
-                reports:
-                  - <+stage.variables.SERVICE_DIR>/**/target/surefire-reports/*.xml
               timeout: 20m
           - step:
               type: Run

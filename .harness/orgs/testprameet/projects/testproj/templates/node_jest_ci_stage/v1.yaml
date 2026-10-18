@@ -68,8 +68,6 @@ template:
                       cd "$SERVICE_DIR"
                       npx jest --ci
                     intelligenceMode: true
-                    reports:
-                      - <+stage.variables.SERVICE_DIR>/reports/junit.xml
                   timeout: 15m
           - step:
               type: Background

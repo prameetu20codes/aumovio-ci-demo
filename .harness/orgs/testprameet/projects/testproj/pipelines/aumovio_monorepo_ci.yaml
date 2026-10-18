@@ -456,8 +456,6 @@ pipeline:
                           cd "$SERVICE_DIR"
                           mvn test -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
                         intelligenceMode: true
-                        reports:
-                          - services/fleet-service/**/target/surefire-reports/*.xml
                       timeout: 20m
                   - step:
                       type: Run
@@ -629,8 +627,6 @@ pipeline:
                               cd "$SERVICE_DIR"
                               npx jest --ci
                             intelligenceMode: true
-                            reports:
-                              - services/dashboard-api/reports/junit.xml
                           timeout: 15m
                   - step:
                       type: Background
