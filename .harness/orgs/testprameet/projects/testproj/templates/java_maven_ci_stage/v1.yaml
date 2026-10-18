@@ -41,8 +41,7 @@ template:
                 shell: Bash
                 command: |-
                   set -euo pipefail
-                  cd "$SERVICE_DIR"
-                  mvn test -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
+                  mvn test -pl "$SERVICE_DIR" -amd -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
                 intelligenceMode: true
               timeout: 20m
           - step:
@@ -55,9 +54,8 @@ template:
                 shell: Bash
                 command: |-
                   set -euo pipefail
-                  cd "$SERVICE_DIR"
-                  mvn package -DskipTests
-                  ls -lh "$APP_JAR"
+                  mvn package -pl "$SERVICE_DIR" -amd -DskipTests
+                  ls -lh "$SERVICE_DIR/$APP_JAR"
               timeout: 15m
           - step:
               type: Background

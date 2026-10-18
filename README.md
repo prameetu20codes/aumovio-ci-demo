@@ -199,6 +199,10 @@ cd services/dashboard-api && npm ci && npm run lint && npm test && npm start    
 
 - **Go has no Test Intelligence** in Harness. Go relies on change detection, test splitting and the Go build/test cache instead.
 - **Java tests are not split.** Split steps share one VM workspace, and parallel Maven runs would clash on `target/`. Test Intelligence handles the speed-up.
+- **Build Intelligence detects Maven from a `pom.xml` at the workspace root.** The root `pom.xml` aggregates the
+  Java services, and the pipeline runs `mvn ... -pl services/fleet-service -amd` from the root. Running Maven
+  only inside `services/fleet-service` makes Harness log "Build Intelligence injection skipped: no supported
+  build tool detected".
 - **Build Intelligence only accelerates Maven running in a Run/Test step**, not inside a Dockerfile. So the JAR is built in
   the pipeline and the Dockerfile just copies it. The same pattern is used for Go (copy the static binary).
 - **Cache keys are unique per stage** (Cache Intelligence requires this for parallel stages) and are tied to

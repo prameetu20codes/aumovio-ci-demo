@@ -444,8 +444,7 @@ pipeline:
                         shell: Bash
                         command: |-
                           set -euo pipefail
-                          cd "$SERVICE_DIR"
-                          mvn test -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
+                          mvn test -pl "$SERVICE_DIR" -amd -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
                         intelligenceMode: true
                       timeout: 20m
                   - step:
@@ -458,9 +457,8 @@ pipeline:
                         shell: Bash
                         command: |-
                           set -euo pipefail
-                          cd "$SERVICE_DIR"
-                          mvn package -DskipTests
-                          ls -lh fleet-api/target/*.jar
+                          mvn package -pl "$SERVICE_DIR" -amd -DskipTests
+                          ls -lh "$SERVICE_DIR"/fleet-api/target/*.jar
                       timeout: 15m
                   - step:
                       type: Background

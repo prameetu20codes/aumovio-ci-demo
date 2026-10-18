@@ -20,7 +20,7 @@
 #   HAR_IMAGE_PREFIX                         pkg.harness.io/<account>/<registry>
 
 GO_PATH_RE='^services/telemetry-ingest/'
-JAVA_PATH_RE='^services/fleet-service/'
+JAVA_PATH_RE='^(services/fleet-service/|pom\.xml$)'
 NODE_PATH_RE='^services/dashboard-api/'
 # Changes here can affect every service, so they rebuild everything.
 SHARED_PATH_RE='^(\.harness/|scripts/ci/|\.ticonfig\.yaml$)'
