@@ -367,12 +367,14 @@ pipeline:
                           fail_on_severity: critical
                         privileged: true
                         image:
-                          type: docker_v2
-                          domain: pkg.harness.io
-                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/telemetry-ingest
+                          type: harness
                           tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
-                          access_id: <+secrets.getValue("har_username")>
-                          access_token: <+secrets.getValue("har_api_token")>
+                          registry: aumovio-snapshot
+                          image_path: telemetry-ingest
+                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/telemetry-ingest
+                          domain: pkg.harness.io
+                        sbom:
+                          format: spdx-json
                       timeout: 15m
             variables:
               - name: SERVICE_DIR
@@ -520,12 +522,14 @@ pipeline:
                           fail_on_severity: critical
                         privileged: true
                         image:
-                          type: docker_v2
-                          domain: pkg.harness.io
-                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/fleet-service
+                          type: harness
                           tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
-                          access_id: <+secrets.getValue("har_username")>
-                          access_token: <+secrets.getValue("har_api_token")>
+                          registry: aumovio-snapshot
+                          image_path: fleet-service
+                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/fleet-service
+                          domain: pkg.harness.io
+                        sbom:
+                          format: spdx-json
                       timeout: 15m
             variables:
               - name: SERVICE_DIR
@@ -679,12 +683,14 @@ pipeline:
                           fail_on_severity: critical
                         privileged: true
                         image:
-                          type: docker_v2
-                          domain: pkg.harness.io
-                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/dashboard-api
+                          type: harness
                           tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
-                          access_id: <+secrets.getValue("har_username")>
-                          access_token: <+secrets.getValue("har_api_token")>
+                          registry: aumovio-snapshot
+                          image_path: dashboard-api
+                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/dashboard-api
+                          domain: pkg.harness.io
+                        sbom:
+                          format: spdx-json
                       timeout: 15m
             variables:
               - name: SERVICE_DIR
