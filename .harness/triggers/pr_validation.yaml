@@ -1,0 +1,44 @@
+trigger:
+  name: PR Validation
+  identifier: pr_validation
+  enabled: true
+  description: Runs the monorepo CI pipeline on every PR opened, reopened or updated against main. Older runs of the same PR are auto-aborted.
+  tags:
+    customer: aumovio
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  pipelineIdentifier: aumovio_monorepo_ci
+  stagesToExecute: []
+  source:
+    type: Webhook
+    spec:
+      type: Github
+      spec:
+        type: PullRequest
+        spec:
+          connectorRef: harness_testing
+          autoAbortPreviousExecutions: true
+          payloadConditions:
+            - key: targetBranch
+              operator: Equals
+              value: main
+          headerConditions: []
+          repoName: aumovio-ci-demo
+          actions:
+            - Open
+            - Reopen
+            - Synchronize
+  inputYaml: |
+    pipeline:
+      identifier: aumovio_monorepo_ci
+      properties:
+        ci:
+          codebase:
+            build:
+              type: PR
+              spec:
+                number: <+trigger.prNumber>
+      variables:
+        - name: force_all
+          type: String
+          value: "false"

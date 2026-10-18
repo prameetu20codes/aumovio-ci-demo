@@ -1,0 +1,31 @@
+template:
+  name: Trivy Scan HAR Image
+  identifier: trivy_scan_har_image
+  versionLabel: v1
+  type: Step
+  projectIdentifier: testproj
+  orgIdentifier: testprameet
+  description: Scans a container image stored in Harness Artifact Registry with the STO Aqua Trivy built-in scanner. Fails on CRITICAL findings.
+  tags:
+    customer: aumovio
+  spec:
+    type: AquaTrivy
+    spec:
+      mode: orchestration
+      config: default
+      target:
+        type: container
+        detection: auto
+      advanced:
+        log:
+          level: info
+        fail_on_severity: critical
+      privileged: true
+      image:
+        type: docker_v2
+        domain: pkg.harness.io
+        name: <+input>
+        tag: <+input>
+        access_id: <+secrets.getValue("har_username")>
+        access_token: <+secrets.getValue("har_api_token")>
+    timeout: 15m

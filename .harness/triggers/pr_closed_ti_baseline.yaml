@@ -1,0 +1,48 @@
+trigger:
+  name: PR Merged - TI Baseline
+  identifier: pr_closed_ti_baseline
+  enabled: true
+  description: >-
+    Required by Test Intelligence for PR builds: the PR Closed (merged) event lets Harness finalize
+    the call-graph baseline for main. Only the cheap Detect Changes stage runs.
+  tags:
+    customer: aumovio
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  pipelineIdentifier: aumovio_monorepo_ci
+  stagesToExecute:
+    - detect_changes
+  source:
+    type: Webhook
+    spec:
+      type: Github
+      spec:
+        type: PullRequest
+        spec:
+          connectorRef: harness_testing
+          autoAbortPreviousExecutions: false
+          payloadConditions:
+            - key: targetBranch
+              operator: Equals
+              value: main
+            - key: <+trigger.payload.pull_request.merged>
+              operator: Equals
+              value: "true"
+          headerConditions: []
+          repoName: aumovio-ci-demo
+          actions:
+            - Close
+  inputYaml: |
+    pipeline:
+      identifier: aumovio_monorepo_ci
+      properties:
+        ci:
+          codebase:
+            build:
+              type: PR
+              spec:
+                number: <+trigger.prNumber>
+      variables:
+        - name: force_all
+          type: String
+          value: "false"

@@ -1,0 +1,236 @@
+template:
+  name: Go CI Stage
+  identifier: go_ci_stage
+  versionLabel: v1
+  type: Stage
+  projectIdentifier: testproj
+  orgIdentifier: testprameet
+  description: >-
+    Standard Go service build: Cache Intelligence (module + build + lint caches), golangci-lint,
+    go vet, unit tests split across parallel steps, static binary, smoke test, Build and Push to
+    Harness Artifact Registry with Docker layer caching, Trivy container scan.
+  tags:
+    customer: aumovio
+    language: go
+  spec:
+    type: CI
+    spec:
+      cloneCodebase: true
+      caching:
+        enabled: true
+        key: go-<+stage.variables.IMAGE_NAME>-{{ checksum "<+stage.variables.SERVICE_DIR>/go.mod" }}
+        paths:
+          - /harness/.cache/go
+          - /harness/.cache/go-build
+          - /harness/.cache/golangci-lint
+      buildIntelligence:
+        enabled: false
+      platform:
+        os: Linux
+        arch: Amd64
+      runtime:
+        type: Cloud
+        spec: {}
+      execution:
+        steps:
+          - step:
+              type: Run
+              name: Download Modules
+              identifier: go_deps
+              spec:
+                image: golang:<+stage.variables.GO_VERSION>
+                shell: Bash
+                command: |-
+                  set -euo pipefail
+                  cd "$SERVICE_DIR"
+                  go mod download
+                  go install gotest.tools/gotestsum@v1.12.3
+              timeout: 10m
+          - parallel:
+              - step:
+                  type: Run
+                  name: Lint - golangci-lint
+                  identifier: go_lint
+                  spec:
+                    image: golangci/golangci-lint:v1.64.8
+                    shell: Bash
+                    command: |-
+                      set -euo pipefail
+                      cd "$SERVICE_DIR"
+                      golangci-lint run ./...
+                  timeout: 10m
+              - step:
+                  type: Run
+                  name: Go Vet
+                  identifier: go_vet
+                  spec:
+                    image: golang:<+stage.variables.GO_VERSION>
+                    shell: Bash
+                    command: |-
+                      set -euo pipefail
+                      cd "$SERVICE_DIR"
+                      go vet ./...
+                  timeout: 10m
+          - step:
+              type: Run
+              name: Unit Tests - Split
+              identifier: go_unit_tests
+              spec:
+                image: golang:<+stage.variables.GO_VERSION>
+                shell: Bash
+                command: |-
+                  set -euo pipefail
+                  cd "$SERVICE_DIR"
+                  INDEX="${HARNESS_NODE_INDEX:-0}"
+                  TOTAL="${HARNESS_NODE_TOTAL:-1}"
+                  # Each parallel node takes every TOTAL-th package that has tests.
+                  PKGS=$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... \
+                    | awk -v i="$INDEX" -v n="$TOTAL" 'NF && (c++ % n) == i')
+                  mkdir -p /harness/reports/go
+                  if [ -z "$PKGS" ]; then
+                    echo "No test packages assigned to node $INDEX of $TOTAL"
+                  else
+                    echo "Node $INDEX/$TOTAL testing:"; echo "$PKGS"
+                    "$GOPATH/bin/gotestsum" --format testname \
+                      --junitfile "/harness/reports/go/junit-$INDEX.xml" \
+                      -- -race -count=1 -coverprofile="/harness/reports/go/coverage-$INDEX.out" $PKGS
+                  fi
+                reports:
+                  type: JUnit
+                  spec:
+                    paths:
+                      - /harness/reports/go/junit-*.xml
+              strategy:
+                parallelism: 2
+              timeout: 15m
+          - step:
+              type: Run
+              name: Build Binary
+              identifier: go_build
+              spec:
+                image: golang:<+stage.variables.GO_VERSION>
+                shell: Bash
+                command: |-
+                  set -euo pipefail
+                  cd "$SERVICE_DIR"
+                  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+                    -ldflags "-s -w -X main.version=$IMAGE_TAG" \
+                    -o "bin/$IMAGE_NAME" "$GO_MAIN_PACKAGE"
+                  ls -lh bin/
+                envVariables:
+                  IMAGE_TAG: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+              timeout: 10m
+          - step:
+              type: Background
+              name: Start Service
+              identifier: app_service
+              spec:
+                image: golang:<+stage.variables.GO_VERSION>
+                shell: Sh
+                command: ./<+stage.variables.SERVICE_DIR>/bin/<+stage.variables.IMAGE_NAME>
+                envVariables:
+                  PORT: <+stage.variables.APP_PORT>
+          - step:
+              type: Run
+              name: Smoke Test
+              identifier: smoke_test
+              spec:
+                image: curlimages/curl:8.10.1
+                shell: Sh
+                command: |-
+                  set -eu
+                  URL="http://app_service:${APP_PORT}${SMOKE_PATH}"
+                  for i in $(seq 1 30); do curl -fsS "$URL" && break; sleep 1; done
+                  curl -fsS "$URL"
+              timeout: 5m
+          - step:
+              type: BuildAndPushDockerRegistry
+              name: Build and Push to HAR
+              identifier: build_push
+              spec:
+                registryRef: <+pipeline.variables.har_registry>
+                repo: <+stage.variables.IMAGE_NAME>
+                tags:
+                  - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                context: <+stage.variables.SERVICE_DIR>
+                dockerfile: <+stage.variables.SERVICE_DIR>/Dockerfile
+                labels:
+                  org.opencontainers.image.revision: <+codebase.commitSha>
+                  org.opencontainers.image.source: <+codebase.repoUrl>
+                caching: true
+              timeout: 15m
+          - step:
+              name: Container Scan - Trivy
+              identifier: image_scan
+              template:
+                templateRef: trivy_scan_har_image
+                versionLabel: v1
+                templateInputs:
+                  type: AquaTrivy
+                  spec:
+                    image:
+                      name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/<+stage.variables.IMAGE_NAME>
+                      tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+    when:
+      pipelineStatus: Success
+      condition: <+input>
+    variables:
+      - name: SERVICE_DIR
+        type: String
+        description: Path of the Go module inside the monorepo, e.g. services/telemetry-ingest
+        required: true
+        value: <+input>
+      - name: IMAGE_NAME
+        type: String
+        description: Image name in Harness Artifact Registry. Also used as the binary name.
+        required: true
+        value: <+input>
+      - name: GO_MAIN_PACKAGE
+        type: String
+        description: Main package to build, relative to SERVICE_DIR.
+        required: true
+        value: <+input>
+      - name: GO_VERSION
+        type: String
+        description: golang image tag
+        required: true
+        value: <+input>.default(1.24)
+      - name: APP_PORT
+        type: String
+        required: true
+        value: <+input>.default(8080)
+      - name: SMOKE_PATH
+        type: String
+        required: true
+        value: <+input>.default(/healthz)
+      - name: GOPATH
+        type: String
+        value: /harness/.cache/go
+      - name: GOCACHE
+        type: String
+        value: /harness/.cache/go-build
+      - name: GOLANGCI_LINT_CACHE
+        type: String
+        value: /harness/.cache/golangci-lint
+      - name: GOFLAGS
+        type: String
+        value: -buildvcs=false
+    failureStrategies:
+      - onFailure:
+          errors:
+            - Connectivity
+            - Timeout
+          action:
+            type: Retry
+            spec:
+              retryCount: 2
+              retryIntervals:
+                - 10s
+              onRetryFailure:
+                action:
+                  type: MarkAsFailure
+      - onFailure:
+          errors:
+            - AllErrors
+          action:
+            type: MarkAsFailure

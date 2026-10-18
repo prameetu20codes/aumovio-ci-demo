@@ -1,0 +1,223 @@
+pipeline:
+  name: Aumovio Monorepo CI - Templated
+  identifier: aumovio_monorepo_ci_templated
+  projectIdentifier: testproj
+  orgIdentifier: testprameet
+  description: >-
+    Same flow as aumovio_monorepo_ci, built from the go_ci_stage, java_maven_ci_stage and
+    node_jest_ci_stage stage templates. Adding a new service = adding one templated stage.
+  tags:
+    customer: aumovio
+    module: ci
+    templated: "true"
+  allowStageExecutions: true
+  properties:
+    ci:
+      codebase:
+        connectorRef: harness_testing
+        repoName: aumovio-ci-demo
+        build: <+input>
+  variables:
+    - name: har_registry
+      type: String
+      required: true
+      value: aumovio-snapshot
+    - name: force_all
+      type: String
+      required: false
+      value: <+input>.default(false).allowedValues(true,false)
+  stages:
+    - stage:
+        name: Detect Changes
+        identifier: detect_changes
+        type: CI
+        spec:
+          cloneCodebase: true
+          caching:
+            enabled: false
+          buildIntelligence:
+            enabled: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Detect Changes
+                  identifier: detect_changes
+                  spec:
+                    shell: Bash
+                    command: . scripts/ci/detect-changes.sh
+                    envVariables:
+                      BUILD_TYPE: <+codebase.build.type>
+                      BASE_SHA: <+codebase.baseCommitSha>
+                      PR_NUMBER: <+codebase.prNumber>
+                      BRANCH: <+codebase.branch>
+                      SHORT_SHA: <+codebase.shortCommitSha>
+                      FORCE_ALL: <+pipeline.variables.force_all>
+                      HARNESS_ACCOUNT: <+account.identifier>
+                      HAR_REGISTRY: <+pipeline.variables.har_registry>
+                    outputVariables:
+                      - name: GO_CHANGED
+                      - name: JAVA_CHANGED
+                      - name: NODE_CHANGED
+                      - name: IMAGE_TAG
+                      - name: HAR_REPO_PATH
+                      - name: HAR_IMAGE_PREFIX
+                  timeout: 5m
+    - parallel:
+        - stage:
+            name: Code Security
+            identifier: code_security
+            type: CI
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: false
+              buildIntelligence:
+                enabled: false
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - parallel:
+                      - step:
+                          type: Gitleaks
+                          name: Secret Detection - Gitleaks
+                          identifier: secret_detection_gitleaks
+                          spec:
+                            mode: orchestration
+                            config: default
+                            target:
+                              type: repository
+                              detection: auto
+                            advanced:
+                              log:
+                                level: info
+                              fail_on_severity: high
+                          timeout: 15m
+                      - step:
+                          type: Semgrep
+                          name: SAST - Semgrep
+                          identifier: sast_semgrep
+                          spec:
+                            mode: orchestration
+                            config: default
+                            target:
+                              type: repository
+                              detection: auto
+                            advanced:
+                              log:
+                                level: info
+                              fail_on_severity: high
+                          timeout: 15m
+                      - step:
+                          type: OsvScanner
+                          name: SCA - OSV Scanner
+                          identifier: sca_osv
+                          spec:
+                            mode: orchestration
+                            config: default
+                            target:
+                              type: repository
+                              detection: auto
+                            advanced:
+                              log:
+                                level: info
+                              fail_on_severity: critical
+                          timeout: 15m
+        - stage:
+            name: Go CI - telemetry-ingest
+            identifier: go_ci
+            template:
+              templateRef: go_ci_stage
+              versionLabel: v1
+              templateInputs:
+                type: CI
+                when:
+                  condition: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.GO_CHANGED> == "true"
+                variables:
+                  - name: SERVICE_DIR
+                    type: String
+                    value: services/telemetry-ingest
+                  - name: IMAGE_NAME
+                    type: String
+                    value: telemetry-ingest
+                  - name: GO_MAIN_PACKAGE
+                    type: String
+                    value: ./cmd/telemetry-ingest
+                  - name: GO_VERSION
+                    type: String
+                    value: "1.24"
+                  - name: APP_PORT
+                    type: String
+                    value: "8080"
+                  - name: SMOKE_PATH
+                    type: String
+                    value: /healthz
+        - stage:
+            name: Java CI - fleet-service
+            identifier: java_ci
+            template:
+              templateRef: java_maven_ci_stage
+              versionLabel: v1
+              templateInputs:
+                type: CI
+                when:
+                  condition: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.JAVA_CHANGED> == "true"
+                variables:
+                  - name: SERVICE_DIR
+                    type: String
+                    value: services/fleet-service
+                  - name: IMAGE_NAME
+                    type: String
+                    value: fleet-service
+                  - name: APP_JAR
+                    type: String
+                    value: fleet-api/target/fleet-api.jar
+                  - name: MAVEN_IMAGE
+                    type: String
+                    value: maven:3.9.9-eclipse-temurin-17
+                  - name: APP_PORT
+                    type: String
+                    value: "8081"
+                  - name: SMOKE_PATH
+                    type: String
+                    value: /v1/fleet/report
+        - stage:
+            name: Node CI - dashboard-api
+            identifier: node_ci
+            template:
+              templateRef: node_jest_ci_stage
+              versionLabel: v1
+              templateInputs:
+                type: CI
+                when:
+                  condition: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.NODE_CHANGED> == "true"
+                variables:
+                  - name: SERVICE_DIR
+                    type: String
+                    value: services/dashboard-api
+                  - name: IMAGE_NAME
+                    type: String
+                    value: dashboard-api
+                  - name: APP_ENTRY
+                    type: String
+                    value: src/server.js
+                  - name: NODE_VERSION
+                    type: String
+                    value: "20"
+                  - name: APP_PORT
+                    type: String
+                    value: "3000"
+                  - name: SMOKE_PATH
+                    type: String
+                    value: /v1/fleet/summary

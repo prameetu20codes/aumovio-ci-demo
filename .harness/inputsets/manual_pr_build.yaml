@@ -1,0 +1,21 @@
+inputSet:
+  name: Manual - PR build
+  identifier: manual_pr_build
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  tags:
+    customer: aumovio
+  pipeline:
+    identifier: aumovio_monorepo_ci
+    properties:
+      ci:
+        codebase:
+          build:
+            type: PR
+            spec:
+              # Replace with the number of the open demo PR before running.
+              number: "1"
+    variables:
+      - name: force_all
+        type: String
+        value: "false"

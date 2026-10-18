@@ -1,0 +1,179 @@
+template:
+  name: Node Jest CI Stage
+  identifier: node_jest_ci_stage
+  versionLabel: v1
+  type: Stage
+  projectIdentifier: testproj
+  orgIdentifier: testprameet
+  description: >-
+    Standard Node.js service build: Cache Intelligence (npm cache), ESLint, Jest with Test
+    Intelligence, smoke test, Build and Push to Harness Artifact Registry with Docker layer
+    caching, Trivy container scan.
+  tags:
+    customer: aumovio
+    language: nodejs
+  spec:
+    type: CI
+    spec:
+      cloneCodebase: true
+      caching:
+        enabled: true
+        key: npm-<+stage.variables.IMAGE_NAME>-{{ checksum "<+stage.variables.SERVICE_DIR>/package-lock.json" }}
+        paths:
+          - /harness/.npm
+      buildIntelligence:
+        enabled: false
+      platform:
+        os: Linux
+        arch: Amd64
+      runtime:
+        type: Cloud
+        spec: {}
+      execution:
+        steps:
+          - step:
+              type: Run
+              name: Install Dependencies
+              identifier: node_install
+              spec:
+                image: node:<+stage.variables.NODE_VERSION>
+                shell: Bash
+                command: |-
+                  set -euo pipefail
+                  cd "$SERVICE_DIR"
+                  npm ci --no-audit --no-fund
+              timeout: 10m
+          - parallel:
+              - step:
+                  type: Run
+                  name: Lint - ESLint
+                  identifier: node_lint
+                  spec:
+                    image: node:<+stage.variables.NODE_VERSION>
+                    shell: Bash
+                    command: |-
+                      set -euo pipefail
+                      cd "$SERVICE_DIR"
+                      npm run lint
+                  timeout: 10m
+              - step:
+                  type: Test
+                  name: Unit Tests - Jest with Test Intelligence
+                  identifier: node_tests_ti
+                  spec:
+                    image: node:<+stage.variables.NODE_VERSION>
+                    shell: Bash
+                    command: |-
+                      set -euo pipefail
+                      cd "$SERVICE_DIR"
+                      npx jest --ci
+                    intelligenceMode: true
+                    reports:
+                      - <+stage.variables.SERVICE_DIR>/reports/junit.xml
+                  timeout: 15m
+          - step:
+              type: Background
+              name: Start Service
+              identifier: app_service
+              spec:
+                image: node:<+stage.variables.NODE_VERSION>
+                shell: Sh
+                command: node <+stage.variables.SERVICE_DIR>/<+stage.variables.APP_ENTRY>
+                envVariables:
+                  PORT: <+stage.variables.APP_PORT>
+                  APP_VERSION: smoke
+          - step:
+              type: Run
+              name: Smoke Test
+              identifier: smoke_test
+              spec:
+                image: curlimages/curl:8.10.1
+                shell: Sh
+                command: |-
+                  set -eu
+                  URL="http://app_service:${APP_PORT}${SMOKE_PATH}"
+                  for i in $(seq 1 30); do curl -fsS "$URL" && break; sleep 1; done
+                  curl -fsS "$URL"
+              timeout: 5m
+          - step:
+              type: BuildAndPushDockerRegistry
+              name: Build and Push to HAR
+              identifier: build_push
+              spec:
+                registryRef: <+pipeline.variables.har_registry>
+                repo: <+stage.variables.IMAGE_NAME>
+                tags:
+                  - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                context: <+stage.variables.SERVICE_DIR>
+                dockerfile: <+stage.variables.SERVICE_DIR>/Dockerfile
+                labels:
+                  org.opencontainers.image.revision: <+codebase.commitSha>
+                  org.opencontainers.image.source: <+codebase.repoUrl>
+                caching: true
+              timeout: 15m
+          - step:
+              name: Container Scan - Trivy
+              identifier: image_scan
+              template:
+                templateRef: trivy_scan_har_image
+                versionLabel: v1
+                templateInputs:
+                  type: AquaTrivy
+                  spec:
+                    image:
+                      name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/<+stage.variables.IMAGE_NAME>
+                      tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+    when:
+      pipelineStatus: Success
+      condition: <+input>
+    variables:
+      - name: SERVICE_DIR
+        type: String
+        description: Path of the Node.js package inside the monorepo, e.g. services/dashboard-api
+        required: true
+        value: <+input>
+      - name: IMAGE_NAME
+        type: String
+        description: Image name in Harness Artifact Registry.
+        required: true
+        value: <+input>
+      - name: APP_ENTRY
+        type: String
+        description: Server entry file relative to SERVICE_DIR, e.g. src/server.js
+        required: true
+        value: <+input>
+      - name: NODE_VERSION
+        type: String
+        description: node image tag (Jest Test Intelligence supports Node 18 to 24).
+        required: true
+        value: <+input>.default(20)
+      - name: APP_PORT
+        type: String
+        required: true
+        value: <+input>.default(3000)
+      - name: SMOKE_PATH
+        type: String
+        required: true
+        value: <+input>.default(/healthz)
+      - name: npm_config_cache
+        type: String
+        value: /harness/.npm
+    failureStrategies:
+      - onFailure:
+          errors:
+            - Connectivity
+            - Timeout
+          action:
+            type: Retry
+            spec:
+              retryCount: 2
+              retryIntervals:
+                - 10s
+              onRetryFailure:
+                action:
+                  type: MarkAsFailure
+      - onFailure:
+          errors:
+            - AllErrors
+          action:
+            type: MarkAsFailure

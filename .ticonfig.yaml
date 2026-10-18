@@ -1,0 +1,12 @@
+# Files that must never cause Test Intelligence to select tests.
+config:
+  ignore:
+    - "README.md"
+    - "docs/**/*"
+    - ".ticonfig.yaml"
+    - ".harness/**/*"
+    - "scripts/**/*"
+    - "**/Dockerfile*"
+    - "**/*.go"
+    - "**/go.mod"
+    - "**/.golangci.yml"

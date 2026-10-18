@@ -1,0 +1,18 @@
+# Build outputs
+**/target/
+**/bin/
+**/reports/
+**/coverage/
+**/node_modules/
+
+# Caches redirected into the workspace by the pipeline (Cache Intelligence paths)
+/.cache/
+/.m2/
+/.npm/
+
+# Files injected by Harness Build Intelligence at runtime
+/.mvn/
+
+.DS_Store
+.idea/
+.vscode/

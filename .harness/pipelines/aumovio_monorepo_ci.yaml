@@ -1,0 +1,725 @@
+pipeline:
+  name: Aumovio Monorepo CI
+  identifier: aumovio_monorepo_ci
+  projectIdentifier: testproj
+  orgIdentifier: testprameet
+  description: >-
+    End-to-end CI for the Aumovio monorepo (Go, Java/Maven, Node.js/Jest): change detection,
+    Test Intelligence, Build Intelligence, Cache Intelligence, Docker layer caching, test
+    splitting, smoke tests, Harness Artifact Registry and STO security scans.
+  tags:
+    customer: aumovio
+    module: ci
+  allowStageExecutions: true
+  properties:
+    ci:
+      codebase:
+        connectorRef: harness_testing
+        repoName: aumovio-ci-demo
+        build: <+input>
+  variables:
+    - name: har_registry
+      type: String
+      description: Harness Artifact Registry (Docker) that receives the images built by this pipeline.
+      required: true
+      value: aumovio-snapshot
+    - name: force_all
+      type: String
+      description: Set to true to build every service even if its folder did not change.
+      required: false
+      value: <+input>.default(false).allowedValues(true,false)
+  notificationRules:
+    - name: CI failure to Slack
+      identifier: ci_failure_to_slack
+      pipelineEvents:
+        - type: PipelineFailed
+      notificationMethod:
+        type: Slack
+        spec:
+          userGroups: []
+          webhookUrl: <+secrets.getValue("slack_ci_webhook")>
+      enabled: false
+  stages:
+    # -------------------------------------------------------------------------------------------
+    # Stage 1: decide which services need to build for this commit or pull request.
+    # -------------------------------------------------------------------------------------------
+    - stage:
+        name: Detect Changes
+        identifier: detect_changes
+        description: Diffs the PR against its base and exports which services changed.
+        type: CI
+        spec:
+          cloneCodebase: true
+          caching:
+            enabled: false
+          buildIntelligence:
+            enabled: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Detect Changes
+                  identifier: detect_changes
+                  spec:
+                    shell: Bash
+                    command: . scripts/ci/detect-changes.sh
+                    envVariables:
+                      BUILD_TYPE: <+codebase.build.type>
+                      BASE_SHA: <+codebase.baseCommitSha>
+                      PR_NUMBER: <+codebase.prNumber>
+                      BRANCH: <+codebase.branch>
+                      SHORT_SHA: <+codebase.shortCommitSha>
+                      FORCE_ALL: <+pipeline.variables.force_all>
+                      HARNESS_ACCOUNT: <+account.identifier>
+                      HAR_REGISTRY: <+pipeline.variables.har_registry>
+                    outputVariables:
+                      - name: GO_CHANGED
+                      - name: JAVA_CHANGED
+                      - name: NODE_CHANGED
+                      - name: IMAGE_TAG
+                      - name: HAR_REPO_PATH
+                      - name: HAR_IMAGE_PREFIX
+                  timeout: 5m
+        failureStrategies:
+          - onFailure:
+              errors:
+                - Connectivity
+                - Timeout
+              action:
+                type: Retry
+                spec:
+                  retryCount: 2
+                  retryIntervals:
+                    - 10s
+                  onRetryFailure:
+                    action:
+                      type: MarkAsFailure
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: MarkAsFailure
+
+    - parallel:
+        # -----------------------------------------------------------------------------------------
+        # Repo-wide security scans (STO built-in scanners). Runs once for the whole monorepo.
+        # -----------------------------------------------------------------------------------------
+        - stage:
+            name: Code Security
+            identifier: code_security
+            description: Secret detection, SAST and SCA across the whole repository.
+            type: CI
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: false
+              buildIntelligence:
+                enabled: false
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - parallel:
+                      - step:
+                          type: Gitleaks
+                          name: Secret Detection - Gitleaks
+                          identifier: secret_detection_gitleaks
+                          spec:
+                            mode: orchestration
+                            config: default
+                            target:
+                              type: repository
+                              detection: auto
+                            advanced:
+                              log:
+                                level: info
+                              fail_on_severity: high
+                          timeout: 15m
+                      - step:
+                          type: Semgrep
+                          name: SAST - Semgrep
+                          identifier: sast_semgrep
+                          spec:
+                            mode: orchestration
+                            config: default
+                            target:
+                              type: repository
+                              detection: auto
+                            advanced:
+                              log:
+                                level: info
+                              fail_on_severity: high
+                          timeout: 15m
+                      - step:
+                          type: OsvScanner
+                          name: SCA - OSV Scanner
+                          identifier: sca_osv
+                          spec:
+                            mode: orchestration
+                            config: default
+                            target:
+                              type: repository
+                              detection: auto
+                            advanced:
+                              log:
+                                level: info
+                              fail_on_severity: critical
+                          timeout: 15m
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
+                    spec:
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+
+        # -----------------------------------------------------------------------------------------
+        # Go swimlane: telemetry-ingest
+        # -----------------------------------------------------------------------------------------
+        - stage:
+            name: Go CI - telemetry-ingest
+            identifier: go_ci
+            description: Lint, split unit tests, build, smoke test, push and scan the Go service.
+            type: CI
+            when:
+              pipelineStatus: Success
+              condition: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.GO_CHANGED> == "true"
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: true
+                key: go-telemetry-ingest-{{ checksum "services/telemetry-ingest/go.mod" }}
+                paths:
+                  - /harness/.cache/go
+                  - /harness/.cache/go-build
+                  - /harness/.cache/golangci-lint
+              buildIntelligence:
+                enabled: false
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - step:
+                      type: Run
+                      name: Download Modules
+                      identifier: go_deps
+                      spec:
+                        image: golang:1.24
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          cd "$SERVICE_DIR"
+                          go mod download
+                          go install gotest.tools/gotestsum@v1.12.3
+                      timeout: 10m
+                  - parallel:
+                      - step:
+                          type: Run
+                          name: Lint - golangci-lint
+                          identifier: go_lint
+                          spec:
+                            image: golangci/golangci-lint:v1.64.8
+                            shell: Bash
+                            command: |-
+                              set -euo pipefail
+                              cd "$SERVICE_DIR"
+                              golangci-lint run ./...
+                          timeout: 10m
+                      - step:
+                          type: Run
+                          name: Go Vet
+                          identifier: go_vet
+                          spec:
+                            image: golang:1.24
+                            shell: Bash
+                            command: |-
+                              set -euo pipefail
+                              cd "$SERVICE_DIR"
+                              go vet ./...
+                          timeout: 10m
+                  - step:
+                      type: Run
+                      name: Unit Tests - Split
+                      identifier: go_unit_tests
+                      spec:
+                        image: golang:1.24
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          cd "$SERVICE_DIR"
+                          INDEX="${HARNESS_NODE_INDEX:-0}"
+                          TOTAL="${HARNESS_NODE_TOTAL:-1}"
+                          # Each parallel node takes every TOTAL-th package that has tests.
+                          PKGS=$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... \
+                            | awk -v i="$INDEX" -v n="$TOTAL" 'NF && (c++ % n) == i')
+                          mkdir -p /harness/reports/go
+                          if [ -z "$PKGS" ]; then
+                            echo "No test packages assigned to node $INDEX of $TOTAL"
+                          else
+                            echo "Node $INDEX/$TOTAL testing:"; echo "$PKGS"
+                            "$GOPATH/bin/gotestsum" --format testname \
+                              --junitfile "/harness/reports/go/junit-$INDEX.xml" \
+                              -- -race -count=1 -coverprofile="/harness/reports/go/coverage-$INDEX.out" $PKGS
+                          fi
+                        reports:
+                          type: JUnit
+                          spec:
+                            paths:
+                              - /harness/reports/go/junit-*.xml
+                      strategy:
+                        parallelism: 2
+                      timeout: 15m
+                  - step:
+                      type: Run
+                      name: Build Binary
+                      identifier: go_build
+                      spec:
+                        image: golang:1.24
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          cd "$SERVICE_DIR"
+                          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+                            -ldflags "-s -w -X main.version=$IMAGE_TAG" \
+                            -o bin/telemetry-ingest ./cmd/telemetry-ingest
+                          ls -lh bin/
+                        envVariables:
+                          IMAGE_TAG: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                      timeout: 10m
+                  - step:
+                      type: Background
+                      name: Start telemetry-ingest
+                      identifier: go_service
+                      spec:
+                        image: golang:1.24
+                        shell: Sh
+                        command: ./services/telemetry-ingest/bin/telemetry-ingest
+                        envVariables:
+                          PORT: "8080"
+                  - step:
+                      type: Run
+                      name: Smoke Test
+                      identifier: go_smoke_test
+                      spec:
+                        image: curlimages/curl:8.10.1
+                        shell: Sh
+                        command: |-
+                          set -eu
+                          BASE=http://go_service:8080
+                          for i in $(seq 1 30); do curl -fsS "$BASE/healthz" && break; sleep 1; done
+                          curl -fsS "$BASE/healthz"
+                          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/v1/readings" \
+                            -H 'Content-Type: application/json' \
+                            -d '{"vehicleId":"SMOKE-1","timestamp":"2020-01-01T00:00:00Z","speedKph":80,"batteryPercent":50,"batteryTempC":30,"tirePressureKpa":[230,230,230,230]}')
+                          echo "POST /v1/readings -> $STATUS"
+                          [ "$STATUS" = "202" ]
+                          curl -fsS "$BASE/v1/vehicles/SMOKE-1/stats"
+                      timeout: 5m
+                  - step:
+                      type: BuildAndPushDockerRegistry
+                      name: Build and Push to HAR
+                      identifier: go_build_push
+                      spec:
+                        registryRef: <+pipeline.variables.har_registry>
+                        repo: telemetry-ingest
+                        tags:
+                          - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                        context: services/telemetry-ingest
+                        dockerfile: services/telemetry-ingest/Dockerfile
+                        labels:
+                          org.opencontainers.image.revision: <+codebase.commitSha>
+                          org.opencontainers.image.source: <+codebase.repoUrl>
+                        caching: true
+                      timeout: 15m
+                  - step:
+                      type: AquaTrivy
+                      name: Container Scan - Trivy
+                      identifier: go_image_scan
+                      spec:
+                        mode: orchestration
+                        config: default
+                        target:
+                          type: container
+                          detection: auto
+                        advanced:
+                          log:
+                            level: info
+                          fail_on_severity: critical
+                        privileged: true
+                        image:
+                          type: docker_v2
+                          domain: pkg.harness.io
+                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/telemetry-ingest
+                          tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          access_id: <+secrets.getValue("har_username")>
+                          access_token: <+secrets.getValue("har_api_token")>
+                      timeout: 15m
+            variables:
+              - name: SERVICE_DIR
+                type: String
+                value: services/telemetry-ingest
+              - name: GOPATH
+                type: String
+                value: /harness/.cache/go
+              - name: GOCACHE
+                type: String
+                value: /harness/.cache/go-build
+              - name: GOLANGCI_LINT_CACHE
+                type: String
+                value: /harness/.cache/golangci-lint
+              - name: GOFLAGS
+                type: String
+                value: -buildvcs=false
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
+                    spec:
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+
+        # -----------------------------------------------------------------------------------------
+        # Java swimlane: fleet-service (Maven multi-module)
+        # -----------------------------------------------------------------------------------------
+        - stage:
+            name: Java CI - fleet-service
+            identifier: java_ci
+            description: Test Intelligence tests, Build Intelligence package, smoke test, push and scan.
+            type: CI
+            when:
+              pipelineStatus: Success
+              condition: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.JAVA_CHANGED> == "true"
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: true
+                key: maven-fleet-service-{{ checksum "services/fleet-service/pom.xml" }}
+                paths:
+                  - /harness/.m2/repository
+              buildIntelligence:
+                enabled: true
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - step:
+                      type: Test
+                      name: Unit Tests - Test Intelligence
+                      identifier: java_tests_ti
+                      spec:
+                        image: maven:3.9.9-eclipse-temurin-17
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          cd "$SERVICE_DIR"
+                          mvn test -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
+                        intelligenceMode: true
+                        reports:
+                          - services/fleet-service/**/target/surefire-reports/*.xml
+                      timeout: 20m
+                  - step:
+                      type: Run
+                      name: Package - Build Intelligence
+                      identifier: java_package
+                      spec:
+                        image: maven:3.9.9-eclipse-temurin-17
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          cd "$SERVICE_DIR"
+                          mvn package -DskipTests
+                          ls -lh fleet-api/target/*.jar
+                      timeout: 15m
+                  - step:
+                      type: Background
+                      name: Start fleet-api
+                      identifier: java_service
+                      spec:
+                        image: eclipse-temurin:17-jre
+                        shell: Sh
+                        command: java -jar services/fleet-service/fleet-api/target/fleet-api.jar
+                        envVariables:
+                          PORT: "8081"
+                          APP_VERSION: smoke
+                  - step:
+                      type: Run
+                      name: Smoke Test
+                      identifier: java_smoke_test
+                      spec:
+                        image: curlimages/curl:8.10.1
+                        shell: Sh
+                        command: |-
+                          set -eu
+                          BASE=http://java_service:8081
+                          for i in $(seq 1 60); do curl -fsS "$BASE/healthz" && break; sleep 1; done
+                          curl -fsS "$BASE/healthz"
+                          curl -fsS "$BASE/v1/fleet/report"
+                          curl -fsS "$BASE/v1/vehicles" > /dev/null
+                      timeout: 5m
+                  - step:
+                      type: BuildAndPushDockerRegistry
+                      name: Build and Push to HAR
+                      identifier: java_build_push
+                      spec:
+                        registryRef: <+pipeline.variables.har_registry>
+                        repo: fleet-service
+                        tags:
+                          - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                        context: services/fleet-service
+                        dockerfile: services/fleet-service/Dockerfile
+                        labels:
+                          org.opencontainers.image.revision: <+codebase.commitSha>
+                          org.opencontainers.image.source: <+codebase.repoUrl>
+                        caching: true
+                      timeout: 15m
+                  - step:
+                      type: AquaTrivy
+                      name: Container Scan - Trivy
+                      identifier: java_image_scan
+                      spec:
+                        mode: orchestration
+                        config: default
+                        target:
+                          type: container
+                          detection: auto
+                        advanced:
+                          log:
+                            level: info
+                          fail_on_severity: critical
+                        privileged: true
+                        image:
+                          type: docker_v2
+                          domain: pkg.harness.io
+                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/fleet-service
+                          tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          access_id: <+secrets.getValue("har_username")>
+                          access_token: <+secrets.getValue("har_api_token")>
+                      timeout: 15m
+            variables:
+              - name: SERVICE_DIR
+                type: String
+                value: services/fleet-service
+              - name: MAVEN_ARGS
+                type: String
+                value: -B -ntp -Dmaven.repo.local=/harness/.m2/repository
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
+                    spec:
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+
+        # -----------------------------------------------------------------------------------------
+        # Node.js swimlane: dashboard-api (Jest)
+        # -----------------------------------------------------------------------------------------
+        - stage:
+            name: Node CI - dashboard-api
+            identifier: node_ci
+            description: Lint, Jest with Test Intelligence, smoke test, push and scan.
+            type: CI
+            when:
+              pipelineStatus: Success
+              condition: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.NODE_CHANGED> == "true"
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: true
+                key: npm-dashboard-api-{{ checksum "services/dashboard-api/package-lock.json" }}
+                paths:
+                  - /harness/.npm
+              buildIntelligence:
+                enabled: false
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - step:
+                      type: Run
+                      name: Install Dependencies
+                      identifier: node_install
+                      spec:
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          cd "$SERVICE_DIR"
+                          npm ci --no-audit --no-fund
+                      timeout: 10m
+                  - parallel:
+                      - step:
+                          type: Run
+                          name: Lint - ESLint
+                          identifier: node_lint
+                          spec:
+                            image: node:20
+                            shell: Bash
+                            command: |-
+                              set -euo pipefail
+                              cd "$SERVICE_DIR"
+                              npm run lint
+                          timeout: 10m
+                      - step:
+                          type: Test
+                          name: Unit Tests - Jest with Test Intelligence
+                          identifier: node_tests_ti
+                          spec:
+                            image: node:20
+                            shell: Bash
+                            command: |-
+                              set -euo pipefail
+                              cd "$SERVICE_DIR"
+                              npx jest --ci
+                            intelligenceMode: true
+                            reports:
+                              - services/dashboard-api/reports/junit.xml
+                          timeout: 15m
+                  - step:
+                      type: Background
+                      name: Start dashboard-api
+                      identifier: node_service
+                      spec:
+                        image: node:20
+                        shell: Sh
+                        command: node services/dashboard-api/src/server.js
+                        envVariables:
+                          PORT: "3000"
+                          APP_VERSION: smoke
+                  - step:
+                      type: Run
+                      name: Smoke Test
+                      identifier: node_smoke_test
+                      spec:
+                        image: curlimages/curl:8.10.1
+                        shell: Sh
+                        command: |-
+                          set -eu
+                          BASE=http://node_service:3000
+                          for i in $(seq 1 30); do curl -fsS "$BASE/healthz" && break; sleep 1; done
+                          curl -fsS "$BASE/healthz"
+                          curl -fsS "$BASE/v1/fleet/summary" > /dev/null
+                          curl -fsS "$BASE/v1/vehicles/VIN-1001?units=imperial"
+                      timeout: 5m
+                  - step:
+                      type: BuildAndPushDockerRegistry
+                      name: Build and Push to HAR
+                      identifier: node_build_push
+                      spec:
+                        registryRef: <+pipeline.variables.har_registry>
+                        repo: dashboard-api
+                        tags:
+                          - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                        context: services/dashboard-api
+                        dockerfile: services/dashboard-api/Dockerfile
+                        labels:
+                          org.opencontainers.image.revision: <+codebase.commitSha>
+                          org.opencontainers.image.source: <+codebase.repoUrl>
+                        caching: true
+                      timeout: 15m
+                  - step:
+                      type: AquaTrivy
+                      name: Container Scan - Trivy
+                      identifier: node_image_scan
+                      spec:
+                        mode: orchestration
+                        config: default
+                        target:
+                          type: container
+                          detection: auto
+                        advanced:
+                          log:
+                            level: info
+                          fail_on_severity: critical
+                        privileged: true
+                        image:
+                          type: docker_v2
+                          domain: pkg.harness.io
+                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/dashboard-api
+                          tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          access_id: <+secrets.getValue("har_username")>
+                          access_token: <+secrets.getValue("har_api_token")>
+                      timeout: 15m
+            variables:
+              - name: SERVICE_DIR
+                type: String
+                value: services/dashboard-api
+              - name: npm_config_cache
+                type: String
+                value: /harness/.npm
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
+                    spec:
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure

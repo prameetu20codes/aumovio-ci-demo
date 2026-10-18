@@ -1,0 +1,167 @@
+template:
+  name: Java Maven CI Stage
+  identifier: java_maven_ci_stage
+  versionLabel: v1
+  type: Stage
+  projectIdentifier: testproj
+  orgIdentifier: testprameet
+  description: >-
+    Standard Maven service build: Cache Intelligence (~/.m2), Test Intelligence (Test step),
+    Build Intelligence (Maven build cache), smoke test, Build and Push to Harness Artifact Registry
+    with Docker layer caching, Trivy container scan.
+  tags:
+    customer: aumovio
+    language: java
+  spec:
+    type: CI
+    spec:
+      cloneCodebase: true
+      caching:
+        enabled: true
+        key: maven-<+stage.variables.IMAGE_NAME>-{{ checksum "<+stage.variables.SERVICE_DIR>/pom.xml" }}
+        paths:
+          - /harness/.m2/repository
+      buildIntelligence:
+        enabled: true
+      platform:
+        os: Linux
+        arch: Amd64
+      runtime:
+        type: Cloud
+        spec: {}
+      execution:
+        steps:
+          - step:
+              type: Test
+              name: Unit Tests - Test Intelligence
+              identifier: java_tests_ti
+              spec:
+                image: <+stage.variables.MAVEN_IMAGE>
+                shell: Bash
+                command: |-
+                  set -euo pipefail
+                  cd "$SERVICE_DIR"
+                  mvn test -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
+                intelligenceMode: true
+                reports:
+                  - <+stage.variables.SERVICE_DIR>/**/target/surefire-reports/*.xml
+              timeout: 20m
+          - step:
+              type: Run
+              name: Package - Build Intelligence
+              identifier: java_package
+              spec:
+                image: <+stage.variables.MAVEN_IMAGE>
+                shell: Bash
+                command: |-
+                  set -euo pipefail
+                  cd "$SERVICE_DIR"
+                  mvn package -DskipTests
+                  ls -lh "$APP_JAR"
+              timeout: 15m
+          - step:
+              type: Background
+              name: Start Service
+              identifier: app_service
+              spec:
+                image: eclipse-temurin:17-jre
+                shell: Sh
+                command: java -jar <+stage.variables.SERVICE_DIR>/<+stage.variables.APP_JAR>
+                envVariables:
+                  PORT: <+stage.variables.APP_PORT>
+                  APP_VERSION: smoke
+          - step:
+              type: Run
+              name: Smoke Test
+              identifier: smoke_test
+              spec:
+                image: curlimages/curl:8.10.1
+                shell: Sh
+                command: |-
+                  set -eu
+                  URL="http://app_service:${APP_PORT}${SMOKE_PATH}"
+                  for i in $(seq 1 60); do curl -fsS "$URL" && break; sleep 1; done
+                  curl -fsS "$URL"
+              timeout: 5m
+          - step:
+              type: BuildAndPushDockerRegistry
+              name: Build and Push to HAR
+              identifier: build_push
+              spec:
+                registryRef: <+pipeline.variables.har_registry>
+                repo: <+stage.variables.IMAGE_NAME>
+                tags:
+                  - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                context: <+stage.variables.SERVICE_DIR>
+                dockerfile: <+stage.variables.SERVICE_DIR>/Dockerfile
+                labels:
+                  org.opencontainers.image.revision: <+codebase.commitSha>
+                  org.opencontainers.image.source: <+codebase.repoUrl>
+                caching: true
+              timeout: 15m
+          - step:
+              name: Container Scan - Trivy
+              identifier: image_scan
+              template:
+                templateRef: trivy_scan_har_image
+                versionLabel: v1
+                templateInputs:
+                  type: AquaTrivy
+                  spec:
+                    image:
+                      name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/<+stage.variables.IMAGE_NAME>
+                      tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+    when:
+      pipelineStatus: Success
+      condition: <+input>
+    variables:
+      - name: SERVICE_DIR
+        type: String
+        description: Path of the Maven project inside the monorepo, e.g. services/fleet-service
+        required: true
+        value: <+input>
+      - name: IMAGE_NAME
+        type: String
+        description: Image name in Harness Artifact Registry.
+        required: true
+        value: <+input>
+      - name: APP_JAR
+        type: String
+        description: Runnable JAR relative to SERVICE_DIR, e.g. fleet-api/target/fleet-api.jar
+        required: true
+        value: <+input>
+      - name: MAVEN_IMAGE
+        type: String
+        description: Maven 3.9+ image (Build Intelligence requires Maven 3.9 or later).
+        required: true
+        value: <+input>.default(maven:3.9.9-eclipse-temurin-17)
+      - name: APP_PORT
+        type: String
+        required: true
+        value: <+input>.default(8081)
+      - name: SMOKE_PATH
+        type: String
+        required: true
+        value: <+input>.default(/healthz)
+      - name: MAVEN_ARGS
+        type: String
+        value: -B -ntp -Dmaven.repo.local=/harness/.m2/repository
+    failureStrategies:
+      - onFailure:
+          errors:
+            - Connectivity
+            - Timeout
+          action:
+            type: Retry
+            spec:
+              retryCount: 2
+              retryIntervals:
+                - 10s
+              onRetryFailure:
+                action:
+                  type: MarkAsFailure
+      - onFailure:
+          errors:
+            - AllErrors
+          action:
+            type: MarkAsFailure
