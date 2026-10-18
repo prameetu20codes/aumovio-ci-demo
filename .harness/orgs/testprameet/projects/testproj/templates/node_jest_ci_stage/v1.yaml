@@ -36,6 +36,7 @@ template:
               name: Install Dependencies
               identifier: node_install
               spec:
+                connectorRef: ffdockerconnector
                 image: node:<+stage.variables.NODE_VERSION>
                 shell: Bash
                 command: |-
@@ -49,6 +50,7 @@ template:
                   name: Lint - ESLint
                   identifier: node_lint
                   spec:
+                    connectorRef: ffdockerconnector
                     image: node:<+stage.variables.NODE_VERSION>
                     shell: Bash
                     command: |-
@@ -61,6 +63,7 @@ template:
                   name: Unit Tests - Jest with Test Intelligence
                   identifier: node_tests_ti
                   spec:
+                    connectorRef: ffdockerconnector
                     image: node:<+stage.variables.NODE_VERSION>
                     shell: Bash
                     command: |-
@@ -74,6 +77,7 @@ template:
               name: Start Service
               identifier: app_service
               spec:
+                connectorRef: ffdockerconnector
                 image: node:<+stage.variables.NODE_VERSION>
                 shell: Sh
                 command: node <+stage.variables.SERVICE_DIR>/<+stage.variables.APP_ENTRY>
@@ -85,6 +89,7 @@ template:
               name: Smoke Test
               identifier: smoke_test
               spec:
+                connectorRef: ffdockerconnector
                 image: curlimages/curl:8.10.1
                 shell: Sh
                 command: |-

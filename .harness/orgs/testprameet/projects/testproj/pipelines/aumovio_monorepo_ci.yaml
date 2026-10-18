@@ -230,6 +230,7 @@ pipeline:
                       name: Download Modules
                       identifier: go_deps
                       spec:
+                        connectorRef: ffdockerconnector
                         image: golang:1.24
                         shell: Bash
                         command: |-
@@ -244,6 +245,7 @@ pipeline:
                           name: Lint - golangci-lint
                           identifier: go_lint
                           spec:
+                            connectorRef: ffdockerconnector
                             image: golangci/golangci-lint:v1.64.8
                             shell: Bash
                             command: |-
@@ -256,6 +258,7 @@ pipeline:
                           name: Go Vet
                           identifier: go_vet
                           spec:
+                            connectorRef: ffdockerconnector
                             image: golang:1.24
                             shell: Bash
                             command: |-
@@ -268,6 +271,7 @@ pipeline:
                       name: Unit Tests - Split
                       identifier: go_unit_tests
                       spec:
+                        connectorRef: ffdockerconnector
                         image: golang:1.24
                         shell: Bash
                         command: |-
@@ -300,6 +304,7 @@ pipeline:
                       name: Build Binary
                       identifier: go_build
                       spec:
+                        connectorRef: ffdockerconnector
                         image: golang:1.24
                         shell: Bash
                         command: |-
@@ -317,6 +322,7 @@ pipeline:
                       name: Start telemetry-ingest
                       identifier: go_service
                       spec:
+                        connectorRef: ffdockerconnector
                         image: golang:1.24
                         shell: Sh
                         command: ./services/telemetry-ingest/bin/telemetry-ingest
@@ -327,6 +333,7 @@ pipeline:
                       name: Smoke Test
                       identifier: go_smoke_test
                       spec:
+                        connectorRef: ffdockerconnector
                         image: curlimages/curl:8.10.1
                         shell: Sh
                         command: |-
@@ -449,6 +456,7 @@ pipeline:
                       name: Unit Tests - Test Intelligence
                       identifier: java_tests_ti
                       spec:
+                        connectorRef: ffdockerconnector
                         image: maven:3.9.9-eclipse-temurin-17
                         shell: Bash
                         command: |-
@@ -462,6 +470,7 @@ pipeline:
                       name: Package - Build Intelligence
                       identifier: java_package
                       spec:
+                        connectorRef: ffdockerconnector
                         image: maven:3.9.9-eclipse-temurin-17
                         shell: Bash
                         command: |-
@@ -475,6 +484,7 @@ pipeline:
                       name: Start fleet-api
                       identifier: java_service
                       spec:
+                        connectorRef: ffdockerconnector
                         image: eclipse-temurin:17-jre
                         shell: Sh
                         command: java -jar services/fleet-service/fleet-api/target/fleet-api.jar
@@ -486,6 +496,7 @@ pipeline:
                       name: Smoke Test
                       identifier: java_smoke_test
                       spec:
+                        connectorRef: ffdockerconnector
                         image: curlimages/curl:8.10.1
                         shell: Sh
                         command: |-
@@ -595,6 +606,7 @@ pipeline:
                       name: Install Dependencies
                       identifier: node_install
                       spec:
+                        connectorRef: ffdockerconnector
                         image: node:20
                         shell: Bash
                         command: |-
@@ -608,6 +620,7 @@ pipeline:
                           name: Lint - ESLint
                           identifier: node_lint
                           spec:
+                            connectorRef: ffdockerconnector
                             image: node:20
                             shell: Bash
                             command: |-
@@ -620,6 +633,7 @@ pipeline:
                           name: Unit Tests - Jest with Test Intelligence
                           identifier: node_tests_ti
                           spec:
+                            connectorRef: ffdockerconnector
                             image: node:20
                             shell: Bash
                             command: |-
@@ -633,6 +647,7 @@ pipeline:
                       name: Start dashboard-api
                       identifier: node_service
                       spec:
+                        connectorRef: ffdockerconnector
                         image: node:20
                         shell: Sh
                         command: node services/dashboard-api/src/server.js
@@ -644,6 +659,7 @@ pipeline:
                       name: Smoke Test
                       identifier: node_smoke_test
                       spec:
+                        connectorRef: ffdockerconnector
                         image: curlimages/curl:8.10.1
                         shell: Sh
                         command: |-

@@ -36,6 +36,7 @@ template:
               name: Unit Tests - Test Intelligence
               identifier: java_tests_ti
               spec:
+                connectorRef: ffdockerconnector
                 image: <+stage.variables.MAVEN_IMAGE>
                 shell: Bash
                 command: |-
@@ -49,6 +50,7 @@ template:
               name: Package - Build Intelligence
               identifier: java_package
               spec:
+                connectorRef: ffdockerconnector
                 image: <+stage.variables.MAVEN_IMAGE>
                 shell: Bash
                 command: |-
@@ -62,6 +64,7 @@ template:
               name: Start Service
               identifier: app_service
               spec:
+                connectorRef: ffdockerconnector
                 image: eclipse-temurin:17-jre
                 shell: Sh
                 command: java -jar <+stage.variables.SERVICE_DIR>/<+stage.variables.APP_JAR>
@@ -73,6 +76,7 @@ template:
               name: Smoke Test
               identifier: smoke_test
               spec:
+                connectorRef: ffdockerconnector
                 image: curlimages/curl:8.10.1
                 shell: Sh
                 command: |-

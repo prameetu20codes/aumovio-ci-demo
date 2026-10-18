@@ -38,6 +38,7 @@ template:
               name: Download Modules
               identifier: go_deps
               spec:
+                connectorRef: ffdockerconnector
                 image: golang:<+stage.variables.GO_VERSION>
                 shell: Bash
                 command: |-
@@ -52,6 +53,7 @@ template:
                   name: Lint - golangci-lint
                   identifier: go_lint
                   spec:
+                    connectorRef: ffdockerconnector
                     image: golangci/golangci-lint:v1.64.8
                     shell: Bash
                     command: |-
@@ -64,6 +66,7 @@ template:
                   name: Go Vet
                   identifier: go_vet
                   spec:
+                    connectorRef: ffdockerconnector
                     image: golang:<+stage.variables.GO_VERSION>
                     shell: Bash
                     command: |-
@@ -76,6 +79,7 @@ template:
               name: Unit Tests - Split
               identifier: go_unit_tests
               spec:
+                connectorRef: ffdockerconnector
                 image: golang:<+stage.variables.GO_VERSION>
                 shell: Bash
                 command: |-
@@ -108,6 +112,7 @@ template:
               name: Build Binary
               identifier: go_build
               spec:
+                connectorRef: ffdockerconnector
                 image: golang:<+stage.variables.GO_VERSION>
                 shell: Bash
                 command: |-
@@ -125,6 +130,7 @@ template:
               name: Start Service
               identifier: app_service
               spec:
+                connectorRef: ffdockerconnector
                 image: golang:<+stage.variables.GO_VERSION>
                 shell: Sh
                 command: ./<+stage.variables.SERVICE_DIR>/bin/<+stage.variables.IMAGE_NAME>
@@ -135,6 +141,7 @@ template:
               name: Smoke Test
               identifier: smoke_test
               spec:
+                connectorRef: ffdockerconnector
                 image: curlimages/curl:8.10.1
                 shell: Sh
                 command: |-
