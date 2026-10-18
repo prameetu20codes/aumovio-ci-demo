@@ -14,7 +14,7 @@ pipeline:
   properties:
     ci:
       codebase:
-        connectorRef: harness_testing
+        connectorRef: harnessiacm
         repoName: aumovio-ci-demo
         build: <+input>
   variables:

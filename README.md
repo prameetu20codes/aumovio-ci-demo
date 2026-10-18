@@ -80,9 +80,9 @@ Triggers and OPA policies are not supported by auto-creation; they live in `harn
 
 Do these in order.
 
-1. **Check the GitHub connector.** The YAML uses `connectorRef: harness_testing` (the identifier of the
-   `harness-testing` connector). Open the connector and confirm:
-   - The identifier. If it is different, replace `harness_testing` in the pipelines and triggers. If the connector lives at org or account level, use `org.harness_testing` or `account.harness_testing`.
+1. **Check the GitHub connector.** The YAML uses `connectorRef: harnessiacm`, a project-level
+   GitHub connector. Open the connector and confirm:
+   - The identifier. If it is different, replace `harnessiacm` in the pipelines and triggers. If the connector lives at org or account level, use `org.harnessiacm` or `account.harnessiacm`.
    - The URL type. For an **account** URL keep `repoName: aumovio-ci-demo`. For a **repository** URL pointing at this repo, delete the `repoName` lines.
    - API access is enabled, so Harness can register webhooks and post PR status checks.
 2. **Create the Artifact Registry**: Artifact Registry → New Registry → Docker → identifier `aumovio-snapshot`.
@@ -102,7 +102,7 @@ Do these in order.
    git push -u origin main
    ```
 6. **Register a project-level webhook** so Harness sees pushes to `.harness/`:
-   Project `testproj` → Project Settings → Webhooks → New Webhook → connector `harness_testing`,
+   Project `testproj` → Project Settings → Webhooks → New Webhook → connector `harnessiacm`,
    repository `aumovio-ci-demo`, folder `.harness`. It must be project scope to create project entities.
 7. **Push the entities in dependency order.** Only pushes to the default branch (`main`) are auto-created.
    Templates have to exist before the pipelines that use them, and a pipeline before its input sets,

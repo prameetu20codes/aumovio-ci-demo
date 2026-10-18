@@ -16,7 +16,7 @@ trigger:
       spec:
         type: PullRequest
         spec:
-          connectorRef: harness_testing
+          connectorRef: harnessiacm
           autoAbortPreviousExecutions: true
           payloadConditions:
             - key: targetBranch
