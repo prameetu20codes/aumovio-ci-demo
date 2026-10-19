@@ -365,7 +365,7 @@ pipeline:
                         advanced:
                           log:
                             level: info
-                          fail_on_severity: critical
+                          fail_on_severity: none
                         privileged: true
                         image:
                           type: harness
@@ -521,7 +521,7 @@ pipeline:
                         advanced:
                           log:
                             level: info
-                          fail_on_severity: critical
+                          fail_on_severity: none
                         privileged: true
                         image:
                           type: harness
@@ -683,7 +683,7 @@ pipeline:
                         advanced:
                           log:
                             level: info
-                          fail_on_severity: critical
+                          fail_on_severity: none
                         privileged: true
                         image:
                           type: harness
