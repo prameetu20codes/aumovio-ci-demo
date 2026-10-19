@@ -210,5 +210,5 @@ cd services/dashboard-api && npm ci && npm run lint && npm test && npm start    
 - **Changes under `.harness/`, `scripts/ci/` or `.ticonfig.yaml` rebuild everything.** The `force_all` variable does the same on demand.
 - The Detect Changes step is **sourced**, with no `exit`, because Harness drops output variables when a script exits explicitly.
 - The YAML was validated against the public Harness v0 schema and the policies were tested with OPA,
-  but nothing has been applied to a live account yet. Expect to adjust identifiers (connector, registry,
+  but nothing has been applied to a live account yet. Expect to adjust identifiers (connectors, registry,
   secrets) on first import.
