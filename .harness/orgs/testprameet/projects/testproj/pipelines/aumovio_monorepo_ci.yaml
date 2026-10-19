@@ -344,6 +344,7 @@ pipeline:
                         repo: telemetry-ingest
                         tags:
                           - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          - latest
                         context: services/telemetry-ingest
                         dockerfile: services/telemetry-ingest/Dockerfile
                         labels:
@@ -499,6 +500,7 @@ pipeline:
                         repo: fleet-service
                         tags:
                           - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          - latest
                         context: services/fleet-service
                         dockerfile: services/fleet-service/Dockerfile
                         labels:
@@ -660,6 +662,7 @@ pipeline:
                         repo: dashboard-api
                         tags:
                           - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          - latest
                         context: services/dashboard-api
                         dockerfile: services/dashboard-api/Dockerfile
                         labels:

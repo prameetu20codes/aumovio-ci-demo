@@ -92,6 +92,7 @@ template:
                 repo: <+stage.variables.IMAGE_NAME>
                 tags:
                   - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                  - latest
                 context: <+stage.variables.SERVICE_DIR>
                 dockerfile: <+stage.variables.SERVICE_DIR>/Dockerfile
                 labels:
