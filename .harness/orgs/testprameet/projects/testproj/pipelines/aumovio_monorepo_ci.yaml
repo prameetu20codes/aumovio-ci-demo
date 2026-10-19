@@ -449,6 +449,11 @@ pipeline:
                           set -euo pipefail
                           mvn test -pl "$SERVICE_DIR" -amd -Dmaven.build.cache.enabled=false -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
                         intelligenceMode: true
+                        reports:
+                          type: JUnit
+                          spec:
+                            paths:
+                              - /harness/<+stage.variables.SERVICE_DIR>/**/target/surefire-reports/TEST-*.xml
                       timeout: 20m
                   - step:
                       type: Run
@@ -623,7 +628,14 @@ pipeline:
                               set -euo pipefail
                               cd "$SERVICE_DIR"
                               npx jest --ci
+                            envVariables:
+                              HARNESS_TI_QA_ENV: QA_ENV_ENABLED
                             intelligenceMode: true
+                            reports:
+                              type: JUnit
+                              spec:
+                                paths:
+                                  - /harness/<+stage.variables.SERVICE_DIR>/reports/junit.xml
                           timeout: 15m
                   - step:
                       type: Background

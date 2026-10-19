@@ -43,6 +43,11 @@ template:
                   set -euo pipefail
                   mvn test -pl "$SERVICE_DIR" -amd -Dmaven.build.cache.enabled=false -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
                 intelligenceMode: true
+                reports:
+                  type: JUnit
+                  spec:
+                    paths:
+                      - /harness/<+stage.variables.SERVICE_DIR>/**/target/surefire-reports/TEST-*.xml
               timeout: 20m
           - step:
               type: Run
