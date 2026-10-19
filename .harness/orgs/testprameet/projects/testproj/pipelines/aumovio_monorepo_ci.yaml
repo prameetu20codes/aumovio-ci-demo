@@ -447,7 +447,7 @@ pipeline:
                         shell: Bash
                         command: |-
                           set -euo pipefail
-                          mvn test -pl "$SERVICE_DIR" -amd -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
+                          mvn test -pl "$SERVICE_DIR" -amd -Dmaven.build.cache.enabled=false -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
                         intelligenceMode: true
                       timeout: 20m
                   - step:
@@ -460,7 +460,7 @@ pipeline:
                         shell: Bash
                         command: |-
                           set -euo pipefail
-                          mvn package -pl "$SERVICE_DIR" -amd -DskipTests
+                          mvn package -pl "$SERVICE_DIR" -amd -DskipTests -Dmaven.build.cache.configPath=/harness/.mvn/maven-build-cache-config.xml
                           ls -lh "$SERVICE_DIR"/fleet-api/target/*.jar
                       timeout: 15m
                   - step:
