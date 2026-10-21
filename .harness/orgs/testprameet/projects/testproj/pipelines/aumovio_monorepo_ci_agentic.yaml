@@ -26,12 +26,12 @@ pipeline:
       type: String
       description: Set to true to build every service even if its folder did not change.
       required: false
-      value: <+input>.default(false).selectOneFrom(true,false)
+      value: <+input>.default(false).allowedValues(true,false)
     - name: e2e_scenario
       type: String
       description: "Demo only: inject a known change before E2E. regression breaks the telemetry speed average; outdated_test renames a dashboard field on purpose."
       required: false
-      value: <+input>.default(none).selectOneFrom(none,regression,outdated_test)
+      value: <+input>.default(none).allowedValues(none,regression,outdated_test)
     - name: triage_confidence_threshold
       type: String
       description: Minimum triage confidence (0-100) for an agent verdict to influence the E2E gate. Below it, failures always block.
@@ -41,7 +41,7 @@ pipeline:
       type: String
       description: warn lets the build continue when every E2E failure is a confident OUTDATED_TEST verdict; block fails it until the tests are updated.
       required: true
-      value: <+input>.default(warn).selectOneFrom(warn,block)
+      value: <+input>.default(warn).allowedValues(warn,block)
   notificationRules:
     - name: CI failure to Slack
       identifier: ci_failure_to_slack
