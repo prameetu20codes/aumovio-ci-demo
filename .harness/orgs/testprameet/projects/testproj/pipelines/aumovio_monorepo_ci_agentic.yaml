@@ -39,7 +39,7 @@ pipeline:
       value: "80"
     - name: outdated_test_policy
       type: String
-      description: "warn lets the build continue when every E2E failure is a confident OUTDATED_TEST verdict; block fails it until the tests are updated."
+      description: warn lets the build continue when every E2E failure is a confident OUTDATED_TEST verdict; block fails it until the tests are updated.
       required: true
       value: <+input>.default(warn).allowedValues(warn,block)
   notificationRules:
@@ -250,8 +250,12 @@ pipeline:
                       name: Route Workflow - AI
                       identifier: route_workflow
                       spec:
-                        agentName: workflow_router_agent@1.0.0
-                        agentSettings: ""
+                        agentName: ca_workflow_router
+                        agentSettings:
+                          changeContextPath: /harness/.agent/change/context.md
+                          diffPath: /harness/.agent/change/diff.patch
+                          outputDir: /harness/.agent/output
+                          repository: prameetu20codes/aumovio-ci-demo
                       timeout: 15m
                       failureStrategies:
                         - onFailure:
@@ -351,8 +355,11 @@ pipeline:
                       name: Code Review - AI
                       identifier: code_review
                       spec:
-                        agentName: pr_review_agent@1.0.6
-                        agentSettings: ""
+                        agentName: aiCodeReviewAgent
+                        agentSettings:
+                          model_name: ""
+                          max_turns: "150"
+                          verify_max_turns: "150"
                       timeout: 20m
                       failureStrategies:
                         - onFailure:
@@ -1094,8 +1101,14 @@ pipeline:
                       name: Triage E2E Failures - AI
                       identifier: triage_e2e_failures
                       spec:
-                        agentName: e2e_failure_triage_agent@1.0.0
-                        agentSettings: ""
+                        agentName: ca_e2e_failure_triage_agent
+                        agentSettings:
+                          changeContextPath: /harness/.agent/change/context.md
+                          diffPath: /harness/.agent/change/diff.patch
+                          evidenceJsonPath: /harness/.agent/e2e/evidence.json
+                          evidencePath: /harness/.agent/e2e/evidence.md
+                          outputDir: /harness/.agent/output
+                          repository: prameetu20codes/aumovio-ci-demo
                       when:
                         stageStatus: Success
                         condition: <+execution.steps.run_e2e.output.outputVariables.E2E_NEEDS_TRIAGE> == "true"
@@ -1236,8 +1249,11 @@ pipeline:
                       name: Optimize Dockerfiles - AI
                       identifier: optimize_dockerfiles
                       spec:
-                        agentName: dockerfile_optimizer_agent@1.0.0
-                        agentSettings: ""
+                        agentName: ca_dockerfile_optimizer_agent
+                        agentSettings:
+                          contextPath: /harness/.agent/dockerfile/context.md
+                          outputDir: /harness/.agent/output
+                          repository: prameetu20codes/aumovio-ci-demo
                       timeout: 20m
                       failureStrategies:
                         - onFailure:
@@ -1326,8 +1342,16 @@ pipeline:
                   name: Autofix - AI
                   identifier: autofix
                   spec:
-                    agentName: autofix_agent@1.0.0
-                    agentSettings: ""
+                    agentName: autofixAgent
+                    agentSettings:
+                      execution_id: <+pipeline.executionId>
+                      source_pipeline_id: <+pipeline.identifier>
+                      repo: prameetu20codes/aumovio-ci-demo
+                      branch: ""
+                      mcp_connectors:
+                        - mcpconnector
+                      llm_connector: account.harnessAnthropic
+                      model_name: claude-sonnet-4-6
                   timeout: 30m
         failureStrategies:
           - onFailure:
