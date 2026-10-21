@@ -1,0 +1,32 @@
+# Remote MCP connector that gives the Worker Agents read access to Harness data
+# (pipeline YAML, executions, test results). Create it in testprameet/testproj via
+# Project Settings > Connectors > New Connector > YAML, or import this file.
+#
+# serverUrl depends on your account's cluster (see Account Settings > Account Details):
+#   prod0  https://unifiedpipeline.harness.io/mcp-server-external/mcp
+#   prod1  https://app.harness.io/prod1/mcp-server-external/mcp
+#   prod2  https://app.harness.io/gratis/mcp-server-external/mcp
+#   prod3  https://app3.harness.io/mcp-server-external/mcp
+#   eu1    https://accounts.eu.harness.io/mcp-server-external/mcp
+#
+# Secret harness_mcp_api_key: a Harness service-account token bound to a read-only role
+# (Pipeline View and Execution View in testprameet/testproj). No edit or execute permissions.
+connector:
+  name: Aumovio Harness MCP
+  identifier: aumovio_harness_mcp
+  description: Read-only Harness Hosted MCP for the Aumovio CI Worker Agents.
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  tags:
+    customer: aumovio
+    module: ai
+  type: Mcp
+  spec:
+    transport: http
+    serverUrl: https://unifiedpipeline.harness.io/mcp-server-external/mcp
+    auth:
+      type: CustomHeader
+      spec:
+        headerName: X-Api-Key
+        headerValueRef: harness_mcp_api_key
+    executeOnDelegate: false

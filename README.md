@@ -11,11 +11,15 @@ aumovio-ci-demo/
 │   ├── fleet-service/      Java 17     Maven multi-module (fleet-core + fleet-api)  (42 tests)
 │   └── dashboard-api/      Node 20     HTTP API, Jest + jest-junit, ESLint          (39 tests)
 ├── scripts/ci/detect-changes.sh        monorepo change detection (sourced by the pipeline)
+├── scripts/ci/*.mjs                    evidence collectors and quality gates for the agentic pipeline
+├── tests/e2e/                          cross-service E2E suite (node:test, 20 tests) and its runner
+├── demo/e2e-scenarios/                 patches injected by the agentic pipeline's e2e_scenario variable
 ├── .ticonfig.yaml                      files Test Intelligence ignores
 ├── .harness/                           auto-created by Harness Git Experience (see setup)
 │   └── orgs/testprameet/projects/testproj/
 │       ├── pipelines/
 │       │   ├── aumovio_monorepo_ci.yaml                  flat pipeline
+│       │   ├── aumovio_monorepo_ci_agentic.yaml          flat pipeline + Worker Agents, E2E and AI gates
 │       │   ├── aumovio_monorepo_ci_templated.yaml        same flow built from templates
 │       │   └── aumovio_monorepo_ci/input_sets/           manual_main_full_build, manual_pr_build
 │       └── templates/
@@ -25,7 +29,9 @@ aumovio-ci-demo/
 │           └── node_jest_ci_stage/v1.yaml                stage template
 └── harness-manual/                     not supported by auto-creation, create these by hand
     ├── triggers/    pr_validation, pr_closed_ti_baseline, push_main (disabled)
-    └── policies/    5 OPA policies (Rego)
+    ├── policies/    6 OPA policies (Rego)
+    ├── agents/      3 custom Worker Agent definitions (paste into AI > Worker Agents)
+    └── connectors/  Harness MCP and GitHub MCP connectors used by the agents
 ```
 
 ## Pipeline flow
@@ -178,6 +184,95 @@ deduplicated view, with exemption workflow.
 **Artifacts.** Open Artifact Registry → `aumovio-snapshot`: three images tagged `pr-<n>-<sha>` /
 `main-<sha>` with the commit SHA label.
 
+## Agentic pipeline: Harness Worker Agents in CI
+
+`aumovio_monorepo_ci_agentic` keeps every build, test and security stage of the flat pipeline unchanged and
+adds AI agents where they decide something useful. The principle throughout: **agents recommend, deterministic
+gates decide, and a missing or wrong agent answer can never make the pipeline less strict.**
+
+```mermaid
+flowchart LR
+  D[Detect Changes] --> S[Code Security]
+  D --> CI[Change Intelligence<br/>baseline plan + Workflow Router agent]
+  D --> CR[AI Code Review<br/>PR builds only]
+  D --> G[Go CI] & J[Java CI] & N[Node CI]
+  CI --> E[E2E Tests + AI Triage<br/>if RUN_E2E]
+  CI --> DF[Dockerfile Review<br/>if RUN_DOCKERFILE_REVIEW]
+  G & J & N & S & CR --> E & DF
+  E & DF --> AF[AI Autofix<br/>only if something failed]
+```
+
+| Agent | Type | Stage | Inputs it reads | Outputs | Who decides |
+|---|---|---|---|---|---|
+| Workflow Router | custom, `workflow_router_agent@1.0.0` | Change Intelligence | change context and diff, recent executions (Harness MCP), PR intent (GitHub MCP) | `RUN_E2E`, `RUN_DOCKERFILE_REVIEW`, `RISK_LEVEL`, `CHANGE_CATEGORY`, `RATIONALE` | `resolve-plan.mjs`: the agent can turn workflows on and raise risk, never the reverse |
+| E2E Failure Triage | custom, `e2e_failure_triage_agent@1.0.0` | E2E Tests | failing tests, assertions, diff signals, git history, service logs, last green run (Harness MCP), PR description (GitHub MCP) | `VERDICT` (REGRESSION, OUTDATED_TEST, FLAKY, ENVIRONMENT, MIXED, UNKNOWN), `CONFIDENCE`, per-class counts, `SUMMARY`, report | `e2e-gate.mjs`, fail-closed (table below) |
+| Dockerfile Optimizer | custom, `dockerfile_optimizer_agent@1.0.0` | Dockerfile Review | Dockerfiles, hadolint results, build-context size, `.dockerignore` presence | `BLOCKING_FINDINGS`, `TOTAL_FINDINGS`, `ESTIMATED_CONTEXT_SAVINGS_MB`, report and a ready-to-apply patch | `dockerfile-gate.mjs`: hadolint errors or agent blocking findings fail; recommendations warn |
+| Code Review | Harness-managed | AI Code Review | the PR diff | review comments | advisory |
+| Autofix | Harness-managed | AI Autofix | the failed execution | proposed fix for human review | advisory |
+
+**E2E gate decisions.** A failure that fails again on retry is "consistent"; one that passes on retry is "flaky".
+
+| E2E result | Triage verdict | Decision |
+|---|---|---|
+| all passed | not run | pass |
+| services unhealthy | any | fail: the change could not be verified |
+| only flaky failures | anything but a confident REGRESSION | pass with warning |
+| consistent failures | none, UNKNOWN, or confidence below `triage_confidence_threshold` | fail: human review |
+| consistent failures | confident OUTDATED_TEST | pass with warning if `outdated_test_policy=warn`, fail if `block` |
+| consistent failures | REGRESSION, MIXED, FLAKY, ENVIRONMENT | fail |
+
+Every agent is read-only by instruction and by credential (read-only Harness role and GitHub token). Agent steps
+retry once and then mark themselves successful, so an agent outage never fails the build on its own; the gate
+step that follows then applies the deterministic fallback. Agent versions are pinned and enforced by the
+`ci_agent_steps_pinned` policy, so editing an agent in the catalog cannot silently change gating behaviour.
+
+### Setup for the agentic pipeline
+
+1. **Secrets** (Project Settings → Secrets → Text):
+   - `harness_mcp_api_key`: token of a service account with a read-only role (Pipeline View, Execution View).
+   - `github_mcp_pat`: fine-grained GitHub PAT for this repository with read-only Contents, Pull requests and Metadata.
+2. **MCP connectors**: create `harness-manual/connectors/aumovio_harness_mcp.yaml` (set `serverUrl` for your
+   cluster, listed in the file) and `aumovio_github_mcp.yaml`, then run each connection test.
+3. **Custom agents**: AI → Worker Agents → + Create → YAML tab. Paste each file from `harness-manual/agents/`
+   and save it as version `1.0.0` with the identifier given in the file header. They use the Harness-managed
+   `account.harnessAnthropic` model connector, so no LLM key is needed.
+4. **Managed agents**: in AI → Worker Agents, find the Code Review and Autofix agents and replace the
+   `agentName` values `pr_review_agent@1.0.6` and `autofix_agent@1.0.0` in the pipeline if yours differ.
+5. **Policy**: add `harness-manual/policies/ci_agent_steps_pinned.rego` to the policy set.
+6. Push `aumovio_monorepo_ci_agentic.yaml`; Git Experience creates the pipeline.
+7. After the first run, open an Agent step group and check the inner step name on the Output tab. The pipeline
+   assumes `<agent identifier>_1` (for example `e2e_failure_triage_agent_1`), as in the Harness docs.
+
+### Demo script for the agents (about 15 minutes)
+
+**Run A – green path.** Run with `force_all=true`, `e2e_scenario=none`. Show the router's decision table in
+*Resolve Workflow Plan*, the E2E Tests tab (20 tests across three live services), and the Dockerfile review: no
+blocking findings, but recommendations such as the missing `.dockerignore` that sends 30+ MB of
+`node_modules` to the Docker daemon on every dashboard build, with a patch to fix it.
+
+**Run B – a real regression.** Run with `e2e_scenario=regression`. The scenario "refactors" the telemetry
+aggregator to compute a running average incorrectly. The Go unit tests pass on this change (they only send two
+readings, for which the wrong formula happens to give the right answer); the E2E test sending three readings
+fails on both attempts. The triage agent sees source changed without test
+changes and a "no behaviour change" commit message, returns `REGRESSION`, and the gate blocks the build.
+AI Autofix then runs because the pipeline failed.
+
+**Run C – an outdated test.** Run with `e2e_scenario=outdated_test`. The scenario renames
+`averageBatteryPercent` to `avgBatteryPercent` on purpose and updates the dashboard unit tests. The E2E
+contract test still expects the old name. The agent returns `OUTDATED_TEST` with the exact assertion change;
+under `outdated_test_policy=warn` the build continues with a warning, and with `block` it fails.
+
+**Run D – governance.** Change an agent step to `agentName: e2e_failure_triage_agent` (no version) and save:
+the policy blocks it.
+
+### Run the E2E suite locally
+
+```bash
+# start the three services as in "Run the services locally", then:
+node tests/e2e/run.mjs        # writes tests/e2e/reports/{junit-*.xml,outputs.env,evidence/e2e-summary.json}
+git apply demo/e2e-scenarios/regression.patch      # try a scenario; undo with git apply -R
+```
+
 ## Run the services locally
 
 ```bash
@@ -209,6 +304,11 @@ cd services/dashboard-api && npm ci && npm run lint && npm test && npm start    
   `go.mod`, `pom.xml` and `package-lock.json` checksums. Cached data is kept for 15 days.
 - **Changes under `.harness/`, `scripts/ci/` or `.ticonfig.yaml` rebuild everything.** The `force_all` variable does the same on demand.
 - The Detect Changes step is **sourced**, with no `exit`, because Harness drops output variables when a script exits explicitly.
+- **Agent outputs come from the instructions.** Worker Agents publish variables they are told to output; there is no
+  output key and no writing to `DRONE_OUTPUT`. Downstream steps reference
+  `<+execution.steps.<agent step>.steps.<agent>_1.output.outputVariables.KEY>` because the Agent step expands into a step group.
+- **The E2E stage rebuilds the Go binary and the JAR** rather than sharing artifacts across stages, because stages on
+  Harness Cloud run on separate VMs. Cache Intelligence and Build Intelligence keep those rebuilds short.
 - The YAML was validated against the public Harness v0 schema and the policies were tested with OPA,
   but nothing has been applied to a live account yet. Expect to adjust identifiers (connectors, registry,
   secrets) on first import.

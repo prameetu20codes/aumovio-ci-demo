@@ -1,0 +1,26 @@
+# Remote MCP connector to the GitHub MCP server, used by the Worker Agents to read
+# pull request metadata and file history for prameetu20codes/aumovio-ci-demo.
+# Use this generic MCP connector type: the dedicated "GitHub MCP" catalog connector
+# only works with Harness AI Chat, not with Worker Agents.
+#
+# Secret github_mcp_pat: a fine-grained GitHub PAT scoped to the aumovio-ci-demo
+# repository with read-only Contents, Pull requests and Metadata permissions.
+# The agents are instructed never to write, but a read-only token enforces it.
+connector:
+  name: Aumovio GitHub MCP
+  identifier: aumovio_github_mcp
+  description: Read-only GitHub MCP for the Aumovio CI Worker Agents.
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  tags:
+    customer: aumovio
+    module: ai
+  type: Mcp
+  spec:
+    transport: http
+    serverUrl: https://api.githubcopilot.com/mcp
+    auth:
+      type: ApiKey
+      spec:
+        apiKeyRef: github_mcp_pat
+    executeOnDelegate: false

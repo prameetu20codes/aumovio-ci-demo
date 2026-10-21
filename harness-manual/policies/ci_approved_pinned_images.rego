@@ -10,6 +10,7 @@ approved_image_prefixes := [
 	"eclipse-temurin:",
 	"node:",
 	"curlimages/curl:",
+	"hadolint/hadolint:",
 ]
 
 deny[msg] {

@@ -8,6 +8,8 @@ config:
     - ".harness/**/*"
     - "harness-manual/**/*"
     - "scripts/**/*"
+    - "tests/e2e/**/*"
+    - "demo/**/*"
     - "**/Dockerfile*"
     - "**/*.go"
     - "**/go.mod"

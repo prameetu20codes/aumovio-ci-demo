@@ -13,6 +13,9 @@
 # Files injected by Harness Build Intelligence at runtime
 /.mvn/
 
+# Evidence and reports written by the CI scripts and Worker Agents
+/.agent/
+
 .DS_Store
 .idea/
 .vscode/
