@@ -1,0 +1,49 @@
+trigger:
+  name: Agentic - Push to main
+  identifier: agentic_push_main
+  enabled: true
+  description: Runs the agentic monorepo CI pipeline after every push or merge to main (publishes main-<sha> images). AI Code Review is skipped on branch builds.
+  tags:
+    customer: aumovio
+    ai: worker-agents
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  pipelineIdentifier: aumovio_monorepo_ci_agentic
+  stagesToExecute: []
+  source:
+    type: Webhook
+    spec:
+      type: Github
+      spec:
+        type: Push
+        spec:
+          connectorRef: harnessiacm
+          autoAbortPreviousExecutions: true
+          payloadConditions:
+            - key: targetBranch
+              operator: Equals
+              value: main
+          headerConditions: []
+          repoName: aumovio-ci-demo
+          actions: []
+  pipelineBranchName: <+trigger.branch>
+  inputYaml: |
+    pipeline:
+      identifier: aumovio_monorepo_ci_agentic
+      properties:
+        ci:
+          codebase:
+            build:
+              type: branch
+              spec:
+                branch: <+trigger.branch>
+      variables:
+        - name: force_all
+          type: String
+          value: "false"
+        - name: e2e_scenario
+          type: String
+          value: none
+        - name: outdated_test_policy
+          type: String
+          value: warn

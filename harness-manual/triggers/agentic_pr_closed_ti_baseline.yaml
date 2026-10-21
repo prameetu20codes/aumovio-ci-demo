@@ -1,0 +1,56 @@
+trigger:
+  name: Agentic - PR Merged - TI Baseline
+  identifier: agentic_pr_closed_ti_baseline
+  enabled: true
+  description: >-
+    Required by Test Intelligence for PR builds of the agentic pipeline: the PR Closed (merged) event lets
+    Harness finalize the call-graph baseline for main. Only the cheap Detect Changes stage runs.
+  tags:
+    customer: aumovio
+    ai: worker-agents
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  pipelineIdentifier: aumovio_monorepo_ci_agentic
+  stagesToExecute:
+    - detect_changes
+  source:
+    type: Webhook
+    spec:
+      type: Github
+      spec:
+        type: PullRequest
+        spec:
+          connectorRef: harnessiacm
+          autoAbortPreviousExecutions: false
+          payloadConditions:
+            - key: targetBranch
+              operator: Equals
+              value: main
+            - key: <+trigger.payload.pull_request.merged>
+              operator: Equals
+              value: "true"
+          headerConditions: []
+          repoName: aumovio-ci-demo
+          actions:
+            - Close
+  pipelineBranchName: <+trigger.targetBranch>
+  inputYaml: |
+    pipeline:
+      identifier: aumovio_monorepo_ci_agentic
+      properties:
+        ci:
+          codebase:
+            build:
+              type: PR
+              spec:
+                number: <+trigger.prNumber>
+      variables:
+        - name: force_all
+          type: String
+          value: "false"
+        - name: e2e_scenario
+          type: String
+          value: none
+        - name: outdated_test_policy
+          type: String
+          value: warn

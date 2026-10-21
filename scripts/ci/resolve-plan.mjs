@@ -48,11 +48,18 @@ const plan = {
   RISK_LEVEL: RISKS[Math.max(RISKS.indexOf(baseline.RISK_LEVEL), RISKS.indexOf(agent.RISK_LEVEL ?? 'low'))],
   CHANGE_CATEGORY: agent.CHANGE_CATEGORY ?? baseline.CHANGE_CATEGORY,
 };
+const GATING = ['RUN_E2E', 'RUN_DOCKERFILE_REVIEW', 'RISK_LEVEL'];
+const relaxRequested =
+  (baseline.RUN_E2E && agent.RUN_E2E === false) ||
+  (baseline.RUN_DOCKERFILE_REVIEW && agent.RUN_DOCKERFILE_REVIEW === false) ||
+  (agent.RISK_LEVEL !== null && RISKS.indexOf(agent.RISK_LEVEL) < RISKS.indexOf(baseline.RISK_LEVEL));
 plan.PLAN_SOURCE = !agentAnswered
   ? 'baseline (agent output unavailable)'
-  : Object.keys(baseline).some((k) => plan[k] !== baseline[k])
+  : GATING.some((k) => plan[k] !== baseline[k])
     ? 'agent escalated baseline'
-    : 'baseline confirmed by agent';
+    : relaxRequested
+      ? 'baseline kept (agent asked to relax it; ignored)'
+      : 'baseline confirmed by agent';
 
 const rows = Object.keys(baseline).map((k) => `| ${k} | ${baseline[k]} | ${agent[k] ?? '-'} | ${plan[k]} |`);
 console.log(['| Decision | Baseline | Agent | Final |', '|---|---|---|---|', ...rows].join('\n'));
