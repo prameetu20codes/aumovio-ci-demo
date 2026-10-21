@@ -204,9 +204,9 @@ flowchart LR
 
 | Agent | Type | Stage | Inputs it reads | Outputs | Who decides |
 |---|---|---|---|---|---|
-| Workflow Router | custom, `workflow_router_agent@1.0.0` | Change Intelligence | change context and diff, recent executions (Harness MCP), PR intent (GitHub MCP) | `RUN_E2E`, `RUN_DOCKERFILE_REVIEW`, `RISK_LEVEL`, `CHANGE_CATEGORY`, `RATIONALE` | `resolve-plan.mjs`: the agent can turn workflows on and raise risk, never the reverse |
-| E2E Failure Triage | custom, `e2e_failure_triage_agent@1.0.0` | E2E Tests | failing tests, assertions, diff signals, git history, service logs, last green run (Harness MCP), PR description (GitHub MCP) | `VERDICT` (REGRESSION, OUTDATED_TEST, FLAKY, ENVIRONMENT, MIXED, UNKNOWN), `CONFIDENCE`, per-class counts, `SUMMARY`, report | `e2e-gate.mjs`, fail-closed (table below) |
-| Dockerfile Optimizer | custom, `dockerfile_optimizer_agent@1.0.0` | Dockerfile Review | Dockerfiles, hadolint results, build-context size, `.dockerignore` presence | `BLOCKING_FINDINGS`, `TOTAL_FINDINGS`, `ESTIMATED_CONTEXT_SAVINGS_MB`, report and a ready-to-apply patch | `dockerfile-gate.mjs`: hadolint errors or agent blocking findings fail; recommendations warn |
+| Workflow Router | custom, `ca_workflow_router` | Change Intelligence | change context and diff, recent executions (Harness MCP), PR intent (GitHub MCP) | `RUN_E2E`, `RUN_DOCKERFILE_REVIEW`, `RISK_LEVEL`, `CHANGE_CATEGORY`, `RATIONALE` | `resolve-plan.mjs`: the agent can turn workflows on and raise risk, never the reverse |
+| E2E Failure Triage | custom, `ca_e2e_failure_triage_agent` | E2E Tests | failing tests, assertions, diff signals, git history, service logs, last green run (Harness MCP), PR description (GitHub MCP) | `VERDICT` (REGRESSION, OUTDATED_TEST, FLAKY, ENVIRONMENT, MIXED, UNKNOWN), `CONFIDENCE`, per-class counts, `SUMMARY`, report | `e2e-gate.mjs`, fail-closed (table below) |
+| Dockerfile Optimizer | custom, `ca_dockerfile_optimizer_agent` | Dockerfile Review | Dockerfiles, hadolint results, build-context size, `.dockerignore` presence | `BLOCKING_FINDINGS`, `TOTAL_FINDINGS`, `ESTIMATED_CONTEXT_SAVINGS_MB`, report and a ready-to-apply patch | `dockerfile-gate.mjs`: hadolint errors or agent blocking findings fail; recommendations warn |
 | Code Review | Harness-managed | AI Code Review | the PR diff | review comments | advisory |
 | Autofix | Harness-managed | AI Autofix | the failed execution | proposed fix for human review | advisory |
 
@@ -240,11 +240,13 @@ step that follows then applies the deterministic fallback. Agent versions are pi
    and save it as version `1.0.0` with the identifier given in the file header. They use the Harness-managed
    `account.harnessAnthropic` model connector, so no LLM key is needed.
 4. **Managed agents**: in AI → Worker Agents, find the Code Review and Autofix agents and replace the
-   `agentName` values `pr_review_agent@1.0.6` and `autofix_agent@1.0.0` in the pipeline if yours differ.
-5. **Policy**: add `harness-manual/policies/ci_agent_steps_pinned.rego` to the policy set.
+   `agentName` values `aiCodeReviewAgent` and `autofixAgent` in the pipeline if yours differ.
+5. **Policy (optional)**: the agent steps currently use the latest stable agent version. To enforce pinning,
+   change each `agentName` to `name@x.y.z` and add `harness-manual/policies/ci_agent_steps_pinned.rego` to the
+   policy set.
 6. Push `aumovio_monorepo_ci_agentic.yaml`; Git Experience creates the pipeline.
 7. After the first run, open an Agent step group and check the inner step name on the Output tab. The pipeline
-   assumes `<agent identifier>_1` (for example `e2e_failure_triage_agent_1`), as in the Harness docs.
+   assumes `<agent identifier>_1` (for example `ca_e2e_failure_triage_agent_1`), as in the Harness docs.
 
 ### Demo script for the agents (about 15 minutes)
 
@@ -265,7 +267,7 @@ AI Autofix then runs because the pipeline failed.
 contract test still expects the old name. The agent returns `OUTDATED_TEST` with the exact assertion change;
 under `outdated_test_policy=warn` the build continues with a warning, and with `block` it fails.
 
-**Run D – governance.** Change an agent step to `agentName: e2e_failure_triage_agent` (no version) and save:
+**Run D – governance.** Change an agent step to `agentName: ca_e2e_failure_triage_agent` (no version) and save:
 the policy blocks it.
 
 ### Run the E2E suite locally

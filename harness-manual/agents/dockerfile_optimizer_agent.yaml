@@ -1,6 +1,6 @@
 # Worker Agent: Dockerfile and Build-Cache Optimizer
 # Create in AI > Worker Agents > + Create > YAML tab (project testprameet/testproj).
-#   Name: Dockerfile Optimizer Agent    Identifier: dockerfile_optimizer_agent    Version: 1.0.0
+#   Name: Dockerfile Optimizer Agent    Identifier: ca_dockerfile_optimizer_agent    Version: 1.0.0
 # Used by pipeline aumovio_monorepo_ci_agentic, stage dockerfile_review, step optimize_dockerfiles.
 # Outputs are consumed by scripts/ci/dockerfile-gate.mjs. Keep the names and allowed values stable.
 agent:

@@ -1,6 +1,6 @@
 # Worker Agent: E2E Failure Triage
 # Create in AI > Worker Agents > + Create > YAML tab (project testprameet/testproj).
-#   Name: E2E Failure Triage Agent    Identifier: e2e_failure_triage_agent    Version: 1.0.0
+#   Name: E2E Failure Triage Agent    Identifier: ca_e2e_failure_triage_agent    Version: 1.0.0
 # Used by pipeline aumovio_monorepo_ci_agentic, stage e2e_tests, step triage_e2e_failures.
 # Outputs are consumed by scripts/ci/e2e-gate.mjs. Keep the names and allowed values stable.
 agent:

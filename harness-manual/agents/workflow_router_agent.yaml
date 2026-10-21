@@ -1,6 +1,6 @@
 # Worker Agent: Change Impact / Workflow Router
 # Create in AI > Worker Agents > + Create > YAML tab (project testprameet/testproj).
-#   Name: Workflow Router Agent    Identifier: workflow_router_agent    Version: 1.0.0
+#   Name: Workflow Router Agent    Identifier: ca_workflow_router    Version: 1.0.0
 # Used by pipeline aumovio_monorepo_ci_agentic, stage change_intelligence, step route_workflow.
 # Outputs are merged by scripts/ci/resolve-plan.mjs, which only lets this agent ESCALATE the
 # deterministic baseline plan (turn workflows on, raise risk), never relax it.

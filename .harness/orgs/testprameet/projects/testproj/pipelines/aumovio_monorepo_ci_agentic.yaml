@@ -291,11 +291,11 @@ pipeline:
                           BASELINE_RUN_DOCKERFILE_REVIEW: <+execution.steps.collect_change_context.output.outputVariables.BASELINE_RUN_DOCKERFILE_REVIEW>
                           BASELINE_RISK_LEVEL: <+execution.steps.collect_change_context.output.outputVariables.BASELINE_RISK_LEVEL>
                           BASELINE_CHANGE_CATEGORY: <+execution.steps.collect_change_context.output.outputVariables.BASELINE_CHANGE_CATEGORY>
-                          AGENT_RUN_E2E: <+execution.steps.route_workflow.steps.workflow_router_agent_1.output.outputVariables.RUN_E2E>
-                          AGENT_RUN_DOCKERFILE_REVIEW: <+execution.steps.route_workflow.steps.workflow_router_agent_1.output.outputVariables.RUN_DOCKERFILE_REVIEW>
-                          AGENT_RISK_LEVEL: <+execution.steps.route_workflow.steps.workflow_router_agent_1.output.outputVariables.RISK_LEVEL>
-                          AGENT_CHANGE_CATEGORY: <+execution.steps.route_workflow.steps.workflow_router_agent_1.output.outputVariables.CHANGE_CATEGORY>
-                          AGENT_RATIONALE: <+execution.steps.route_workflow.steps.workflow_router_agent_1.output.outputVariables.RATIONALE>
+                          AGENT_RUN_E2E: <+execution.steps.route_workflow.steps.ca_workflow_router_1.output.outputVariables.RUN_E2E>
+                          AGENT_RUN_DOCKERFILE_REVIEW: <+execution.steps.route_workflow.steps.ca_workflow_router_1.output.outputVariables.RUN_DOCKERFILE_REVIEW>
+                          AGENT_RISK_LEVEL: <+execution.steps.route_workflow.steps.ca_workflow_router_1.output.outputVariables.RISK_LEVEL>
+                          AGENT_CHANGE_CATEGORY: <+execution.steps.route_workflow.steps.ca_workflow_router_1.output.outputVariables.CHANGE_CATEGORY>
+                          AGENT_RATIONALE: <+execution.steps.route_workflow.steps.ca_workflow_router_1.output.outputVariables.RATIONALE>
                         outputVariables:
                           - name: RUN_E2E
                           - name: RUN_DOCKERFILE_REVIEW
@@ -1146,9 +1146,9 @@ pipeline:
                           E2E_STATUS: <+execution.steps.run_e2e.output.outputVariables.E2E_STATUS>
                           E2E_FAILED: <+execution.steps.run_e2e.output.outputVariables.E2E_FAILED>
                           E2E_FLAKY: <+execution.steps.run_e2e.output.outputVariables.E2E_FLAKY>
-                          VERDICT: <+execution.steps.triage_e2e_failures.steps.e2e_failure_triage_agent_1.output.outputVariables.VERDICT>
-                          CONFIDENCE: <+execution.steps.triage_e2e_failures.steps.e2e_failure_triage_agent_1.output.outputVariables.CONFIDENCE>
-                          SUMMARY: <+execution.steps.triage_e2e_failures.steps.e2e_failure_triage_agent_1.output.outputVariables.SUMMARY>
+                          VERDICT: <+execution.steps.triage_e2e_failures.steps.ca_e2e_failure_triage_agent_1.output.outputVariables.VERDICT>
+                          CONFIDENCE: <+execution.steps.triage_e2e_failures.steps.ca_e2e_failure_triage_agent_1.output.outputVariables.CONFIDENCE>
+                          SUMMARY: <+execution.steps.triage_e2e_failures.steps.ca_e2e_failure_triage_agent_1.output.outputVariables.SUMMARY>
                           CONFIDENCE_THRESHOLD: <+pipeline.variables.triage_confidence_threshold>
                           OUTDATED_TEST_POLICY: <+pipeline.variables.outdated_test_policy>
                       when:
@@ -1287,9 +1287,9 @@ pipeline:
                         envVariables:
                           HADOLINT_ERRORS: <+execution.steps.dockerfile_context.output.outputVariables.HADOLINT_ERRORS>
                           HADOLINT_WARNINGS: <+execution.steps.dockerfile_context.output.outputVariables.HADOLINT_WARNINGS>
-                          BLOCKING_FINDINGS: <+execution.steps.optimize_dockerfiles.steps.dockerfile_optimizer_agent_1.output.outputVariables.BLOCKING_FINDINGS>
-                          TOTAL_FINDINGS: <+execution.steps.optimize_dockerfiles.steps.dockerfile_optimizer_agent_1.output.outputVariables.TOTAL_FINDINGS>
-                          SUMMARY: <+execution.steps.optimize_dockerfiles.steps.dockerfile_optimizer_agent_1.output.outputVariables.SUMMARY>
+                          BLOCKING_FINDINGS: <+execution.steps.optimize_dockerfiles.steps.ca_dockerfile_optimizer_agent_1.output.outputVariables.BLOCKING_FINDINGS>
+                          TOTAL_FINDINGS: <+execution.steps.optimize_dockerfiles.steps.ca_dockerfile_optimizer_agent_1.output.outputVariables.TOTAL_FINDINGS>
+                          SUMMARY: <+execution.steps.optimize_dockerfiles.steps.ca_dockerfile_optimizer_agent_1.output.outputVariables.SUMMARY>
                       when:
                         stageStatus: All
                       timeout: 5m
@@ -1347,7 +1347,7 @@ pipeline:
                       execution_id: <+pipeline.executionId>
                       source_pipeline_id: <+pipeline.identifier>
                       repo: prameetu20codes/aumovio-ci-demo
-                      branch: ""
+                      branch: <+codebase.branch>
                       mcp_connectors:
                         - mcpconnector
                       llm_connector: account.harnessAnthropic
