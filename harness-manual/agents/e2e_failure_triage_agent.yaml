@@ -17,6 +17,7 @@ agent:
       - Harness org/project: <+org.identifier>/<+project.identifier>
       - Pipeline: <+pipeline.identifier>, execution <+pipeline.executionId>
       - Build type: <+codebase.build.type>; branch <+codebase.branch>; PR <+codebase.prNumber>
+      - PR title: <+codebase.prTitle>
       - Commit: <+codebase.commitSha>; repository <+inputs.repository>
 
       ## Evidence (read these first, from the working directory /harness)
@@ -30,8 +31,9 @@ agent:
       - Harness MCP: find the most recent successful execution of this pipeline on the default
         branch and check whether the same tests passed there. A test that already failed on the
         default branch before this change points away from REGRESSION.
-      - GitHub MCP: if this is a PR build, read the PR title and description for a statement of
-        intended behaviour change (for example "rename field", "breaking change").
+      - GitHub MCP, only if one is configured: if this is a PR build, read the PR description for
+        a statement of intended behaviour change (for example "rename field", "breaking change").
+        Otherwise use the PR title above and the commit messages in the change context.
       If an MCP call fails, continue with the local evidence and say so in the report.
 
       ## Classification rubric (apply per failing test)
@@ -81,26 +83,14 @@ agent:
       - Do not re-run builds or tests and do not install packages.
       - Base every conclusion on evidence you can cite (file path, line, log line or assertion).
       - Never print secrets or tokens, even if they appear in logs.
-    connector: <+inputs.llmConnector>
-    mcp: <+inputs.mcpConnectors>
-    allowed_domains: harness.io,api.githubcopilot.com,api.github.com
+    connector: account.harnessAnthropic
+    mcp:
+      - mcpconnector
+    allowed_domains: harness.io
     max_turns: "40"
     env:
       AGENT_ROLE: e2e-failure-triage
   inputs:
-    llmConnector:
-      type: connector
-      required: true
-      default: account.harnessAnthropic
-    mcpConnectors:
-      type: array
-      default:
-        - aumovio_harness_mcp
-        - aumovio_github_mcp
-      ui:
-        component: array
-        input:
-          inputType: connector
     repository:
       type: string
       default: prameetu20codes/aumovio-ci-demo

@@ -61,25 +61,14 @@ agent:
       - Do not commit, push, open pull requests, post comments or change any Harness resource.
       - Do not build images, pull images or install packages.
       - Never print secrets or tokens.
-    connector: <+inputs.llmConnector>
-    mcp: <+inputs.mcpConnectors>
+    connector: account.harnessAnthropic
+    mcp:
+      - mcpconnector
     allowed_domains: harness.io
     max_turns: "30"
     env:
       AGENT_ROLE: dockerfile-optimizer
   inputs:
-    llmConnector:
-      type: connector
-      required: true
-      default: account.harnessAnthropic
-    mcpConnectors:
-      type: array
-      default:
-        - aumovio_harness_mcp
-      ui:
-        component: array
-        input:
-          inputType: connector
     repository:
       type: string
       default: prameetu20codes/aumovio-ci-demo

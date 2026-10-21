@@ -18,6 +18,7 @@ agent:
       - Harness org/project: <+org.identifier>/<+project.identifier>
       - Pipeline: <+pipeline.identifier>, execution <+pipeline.executionId>
       - Build type: <+codebase.build.type>; branch <+codebase.branch>; PR <+codebase.prNumber>
+      - PR title: <+codebase.prTitle>
       - Repository: <+inputs.repository>
 
       ## Evidence (working directory /harness)
@@ -29,7 +30,8 @@ agent:
       ## Optional enrichment through MCP (read-only)
       - Harness MCP: look at the last 5 executions of pipeline <+pipeline.identifier>. If E2E or the
         Dockerfile review failed recently for the same services, treat this change as riskier.
-      - GitHub MCP: for PR builds, read the PR title, description and labels for intent.
+      - GitHub MCP, only if one is configured: for PR builds, read the PR description and labels
+        for intent. Otherwise use the PR title above and the commit messages.
       If an MCP call fails, continue with local evidence.
 
       ## What to decide
@@ -62,26 +64,14 @@ agent:
       - When in doubt, choose the stricter option. The pipeline ignores any attempt to relax the
         baseline plan, so explain disagreements with the baseline in the report instead.
       - Never print secrets or tokens.
-    connector: <+inputs.llmConnector>
-    mcp: <+inputs.mcpConnectors>
-    allowed_domains: harness.io,api.githubcopilot.com,api.github.com
+    connector: account.harnessAnthropic
+    mcp:
+      - mcpconnector
+    allowed_domains: harness.io
     max_turns: "25"
     env:
       AGENT_ROLE: workflow-router
   inputs:
-    llmConnector:
-      type: connector
-      required: true
-      default: account.harnessAnthropic
-    mcpConnectors:
-      type: array
-      default:
-        - aumovio_harness_mcp
-        - aumovio_github_mcp
-      ui:
-        component: array
-        input:
-          inputType: connector
     repository:
       type: string
       default: prameetu20codes/aumovio-ci-demo

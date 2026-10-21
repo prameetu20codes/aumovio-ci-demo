@@ -221,18 +221,21 @@ flowchart LR
 | consistent failures | confident OUTDATED_TEST | pass with warning if `outdated_test_policy=warn`, fail if `block` |
 | consistent failures | REGRESSION, MIXED, FLAKY, ENVIRONMENT | fail |
 
-Every agent is read-only by instruction and by credential (read-only Harness role and GitHub token). Agent steps
+Every agent is read-only by instruction and by credential (read-only Harness MCP credential). Agent steps
 retry once and then mark themselves successful, so an agent outage never fails the build on its own; the gate
 step that follows then applies the deterministic fallback. Agent versions are pinned and enforced by the
 `ci_agent_steps_pinned` policy, so editing an agent in the catalog cannot silently change gating behaviour.
 
 ### Setup for the agentic pipeline
 
-1. **Secrets** (Project Settings → Secrets → Text):
-   - `harness_mcp_api_key`: token of a service account with a read-only role (Pipeline View, Execution View).
-   - `github_mcp_pat`: fine-grained GitHub PAT for this repository with read-only Contents, Pull requests and Metadata.
-2. **MCP connectors**: create `harness-manual/connectors/aumovio_harness_mcp.yaml` (set `serverUrl` for your
-   cluster, listed in the file) and `aumovio_github_mcp.yaml`, then run each connection test.
+1. **Harness MCP connector**: the agents use the existing project connector `mcpconnector`; use a read-only
+   credential (Pipeline View, Execution View). `harness-manual/connectors/aumovio_harness_mcp.yaml` is a
+   reference definition if you need to create one.
+2. **GitHub MCP connector (optional)**: the agents work without it, using the PR title and commit messages.
+   To give them PR descriptions and labels, create secret `github_mcp_pat` (fine-grained, read-only Contents,
+   Pull requests and Metadata) and `harness-manual/connectors/aumovio_github_mcp.yaml`, then add
+   `aumovio_github_mcp` to `with.mcp` and `api.githubcopilot.com` to `with.allowed_domains` in the router and
+   triage agents.
 3. **Custom agents**: AI → Worker Agents → + Create → YAML tab. Paste each file from `harness-manual/agents/`
    and save it as version `1.0.0` with the identifier given in the file header. They use the Harness-managed
    `account.harnessAnthropic` model connector, so no LLM key is needed.
