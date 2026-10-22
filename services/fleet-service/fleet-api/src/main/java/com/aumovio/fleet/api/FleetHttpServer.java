@@ -7,7 +7,10 @@ import com.aumovio.fleet.core.MaintenancePlanner;
 import com.aumovio.fleet.core.Vehicle;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +27,9 @@ import java.util.Optional;
 public final class FleetHttpServer {
 
     private static final String VEHICLES_PREFIX = "/v1/vehicles/";
+    private static final String DOCUMENTS_PREFIX = "/v1/documents/";
+    private static final String DOCUMENTS_DIR =
+            Optional.ofNullable(System.getenv("FLEET_DOCS_DIR")).orElse("/srv/fleet-docs");
 
     private final FleetRepository repository;
     private final Clock clock;
@@ -44,6 +50,7 @@ public final class FleetHttpServer {
         server.createContext("/healthz", ex -> respond(ex, 200, Map.of("status", "ok", "version", version)));
         server.createContext("/v1/vehicles", this::vehicles);
         server.createContext("/v1/fleet/report", ex -> respond(ex, 200, report()));
+        server.createContext(DOCUMENTS_PREFIX, this::document);
         server.start();
         return server.getAddress().getPort();
     }
@@ -72,6 +79,25 @@ public final class FleetHttpServer {
             return;
         }
         respond(exchange, 200, summary(vehicle.get()));
+    }
+
+    /** Serves service manuals and recall notices, e.g. GET /v1/documents/recalls/2026-04.pdf. */
+    private void document(HttpExchange exchange) throws IOException {
+        String name = exchange.getRequestURI().getPath().substring(DOCUMENTS_PREFIX.length());
+        try (InputStream in = openDocument(name)) {
+            byte[] bytes = in.readAllBytes();
+            exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(bytes);
+            }
+        } catch (FileNotFoundException e) {
+            respond(exchange, 404, Map.of("error", "unknown document"));
+        }
+    }
+
+    private static InputStream openDocument(String name) throws FileNotFoundException {
+        return new FileInputStream(DOCUMENTS_DIR + "/" + name);
     }
 
     private Map<String, Object> summary(Vehicle v) {
