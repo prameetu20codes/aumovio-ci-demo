@@ -13,7 +13,6 @@ aumovio-ci-demo/
 ├── scripts/ci/detect-changes.sh        monorepo change detection (sourced by the pipeline)
 ├── scripts/ci/*.mjs                    evidence collectors and quality gates for the agentic pipeline
 ├── tests/e2e/                          cross-service E2E suite (node:test, 20 tests) and its runner
-├── demo/e2e-scenarios/                 patches injected by the agentic pipeline's e2e_scenario variable
 ├── .ticonfig.yaml                      files Test Intelligence ignores
 ├── .harness/                           auto-created by Harness Git Experience (see setup)
 │   └── orgs/testprameet/projects/testproj/
@@ -199,7 +198,7 @@ flowchart LR
   CI --> E[E2E Tests + AI Triage<br/>if RUN_E2E]
   CI --> DF[Dockerfile Review<br/>if RUN_DOCKERFILE_REVIEW]
   G & J & N & S & CR --> E & DF
-  E & DF --> AF[AI Autofix<br/>only if something failed]
+  E & DF --> T[CI Failure Triage agent<br/>only if something failed]
 ```
 
 | Agent | Type | Stage | Inputs it reads | Outputs | Who decides |
@@ -208,7 +207,7 @@ flowchart LR
 | E2E Failure Triage | custom, `ca_e2e_failure_triage_agent` | E2E Tests | failing tests, assertions, diff signals, git history, service logs, last green run (Harness MCP), PR description (GitHub MCP) | `VERDICT` (REGRESSION, OUTDATED_TEST, FLAKY, ENVIRONMENT, MIXED, UNKNOWN), `CONFIDENCE`, per-class counts, `SUMMARY`, report | `e2e-gate.mjs`, fail-closed (table below) |
 | Dockerfile Optimizer | custom, `ca_dockerfile_optimizer_agent` | Dockerfile Review | Dockerfiles, hadolint results, build-context size, `.dockerignore` presence | `BLOCKING_FINDINGS`, `TOTAL_FINDINGS`, `ESTIMATED_CONTEXT_SAVINGS_MB`, report and a ready-to-apply patch | `dockerfile-gate.mjs`: hadolint errors or agent blocking findings fail; recommendations warn |
 | Code Review | Harness-managed | AI Code Review | the PR diff | review comments | advisory |
-| Autofix | Harness-managed | AI Autofix | the failed execution | proposed fix for human review | advisory |
+| CI Failure Triage | custom, `ca_ci_failure_triage_agent` | CI Failure Triage (only when the run failed) | failed stages and steps (execution API), unit tests re-run for the failed services, change diff, repository, execution logs and scan results (Harness MCP) | `FAILURE_CATEGORY` (UNIT_TEST, SECRET, VULNERABLE_DEPENDENCY, SAST, E2E, DOCKERFILE, BUILD, ENVIRONMENT, MIXED, UNKNOWN), `ROOT_CAUSE`, `SUSPECT_FILES`, `CONFIDENCE`, `FIX_OWNER`, report and `ci-fix.patch` | advisory: the run has already failed; the agent explains why and proposes a patch, and never changes code |
 
 **E2E gate decisions.** A failure that fails again on retry is "consistent"; one that passes on retry is "flaky".
 
@@ -239,8 +238,8 @@ step that follows then applies the deterministic fallback. Agent versions are pi
 3. **Custom agents**: AI → Worker Agents → + Create → YAML tab. Paste each file from `harness-manual/agents/`
    and save it as version `1.0.0` with the identifier given in the file header. They use the Harness-managed
    `account.harnessAnthropic` model connector, so no LLM key is needed.
-4. **Managed agents**: in AI → Worker Agents, find the Code Review and Autofix agents and replace the
-   `agentName` values `aiCodeReviewAgent` and `autofixAgent` in the pipeline if yours differ.
+4. **Managed agent**: in AI → Worker Agents, find the Code Review agent and replace the `agentName` value
+   `aiCodeReviewAgent` in the pipeline if yours differs.
 5. **Policy (optional)**: the agent steps currently use the latest stable agent version. To enforce pinning,
    change each `agentName` to `name@x.y.z` and add `harness-manual/policies/ci_agent_steps_pinned.rego` to the
    policy set.
@@ -248,34 +247,43 @@ step that follows then applies the deterministic fallback. Agent versions are pi
 7. After the first run, open an Agent step group and check the inner step name on the Output tab. The pipeline
    assumes `<agent identifier>_1` (for example `ca_e2e_failure_triage_agent_1`), as in the Harness docs.
 
-### Demo script for the agents (about 15 minutes)
+### Scenario branches for testing the agents
 
-**Run A – green path.** Run with `force_all=true`, `e2e_scenario=none`. Show the router's decision table in
-*Resolve Workflow Plan*, the E2E Tests tab (20 tests across three live services), and the Dockerfile review: no
-blocking findings, but recommendations such as the missing `.dockerignore` that sends 30+ MB of
-`node_modules` to the Docker daemon on every dashboard build, with a patch to fix it.
+`main` is the green baseline. Each `scenario/*` branch is **one commit on top of `main`** that plants one kind of
+problem, written the way it would look in a real change (plausible commit message, no hints in the code). Run
+`aumovio_monorepo_ci_agentic` manually and pick the scenario branch both for the pipeline YAML and for the
+codebase (build type *Git Branch*), then compare what the agents report with the expected outcome below.
 
-**Run B – a real regression.** Run with `e2e_scenario=regression`. The scenario "refactors" the telemetry
-aggregator to compute a running average incorrectly. The Go unit tests pass on this change (they only send two
-readings, for which the wrong formula happens to give the right answer); the E2E test sending three readings
-fails on both attempts. The triage agent sees source changed without test
-changes and a "no behaviour change" commit message, returns `REGRESSION`, and the gate blocks the build.
-AI Autofix then runs because the pipeline failed.
+| Branch | What is planted | Should fail in | Agent that should explain it | Expected verdict |
+|---|---|---|---|---|
+| `main` | nothing | – (green) | Workflow Router only | plan confirmed, no triage |
+| `scenario/unit-test-go` | battery-low warning check changed from `<=` to `<`, so exactly 20 % no longer alerts | Go CI → unit tests | CI Failure Triage | `UNIT_TEST`, `alerts.go`, application bug |
+| `scenario/unit-test-java` | range reserve applied as a multiplier instead of being subtracted | Java CI → unit tests | CI Failure Triage | `UNIT_TEST`, `RangeEstimator.java`, application bug |
+| `scenario/unit-test-node` | km to miles conversion inverted during a "units refactor" | Node CI → Jest | CI Failure Triage | `UNIT_TEST`, `units.js`, application bug |
+| `scenario/vulnerable-dependency` | `log4j-core 2.14.1` (Log4Shell) in fleet-core and `minimist 1.2.5` in dashboard-api | Code Security → OSV (critical) | CI Failure Triage | `VULNERABLE_DEPENDENCY`, upgrade to fixed versions |
+| `scenario/hardcoded-secret` | an AWS access key pair hard-coded in a dashboard-api export client | Code Security → Gitleaks | CI Failure Triage | `SECRET`, move to configuration and rotate |
+| `scenario/sast-injection` | a diagnostics endpoint that passes a query parameter to a shell | Code Security → Semgrep (high) | CI Failure Triage (and Code Review on a PR) | `SAST`, command injection, safe rewrite |
+| `scenario/e2e-regression` | telemetry aggregator "refactor" with a wrong running average; Go unit tests still pass | E2E Tests → quality gate | E2E Failure Triage, then CI Failure Triage summarises | `REGRESSION` |
+| `scenario/e2e-outdated-test` | intentional dashboard API rename with unit tests updated, E2E test not updated | passes with a warning (`outdated_test_policy=warn`) or fails (`block`) | E2E Failure Triage | `OUTDATED_TEST` with the assertion change |
+| `scenario/dockerfile-issues` | dashboard-api image switched to `node:latest`, single stage, running as root | Dockerfile Review → gate | Dockerfile Optimizer, then CI Failure Triage | blocking findings: root user, mutable tag |
+| `scenario/mixed` | the Go unit-test bug, the hard-coded secret and the vulnerable dependency together | Go CI and Code Security | CI Failure Triage | `MIXED`, three separate root causes |
 
-**Run C – an outdated test.** Run with `e2e_scenario=outdated_test`. The scenario renames
-`averageBatteryPercent` to `avgBatteryPercent` on purpose and updates the dashboard unit tests. The E2E
-contract test still expects the old name. The agent returns `OUTDATED_TEST` with the exact assertion change;
-under `outdated_test_policy=warn` the build continues with a warning, and with `block` it fails.
+What to look at in each run:
 
-**Run D – governance.** Change an agent step to `agentName: ca_e2e_failure_triage_agent` (no version) and save:
-the policy blocks it.
+- **Resolve Workflow Plan**: the router's decision table and whether it escalated the baseline (risk is raised to
+  `high` for alert logic, security-sensitive code and dependency changes).
+- **CI Failure Triage → Publish Triage Report**: category, confidence, root cause, suspect files, the full report
+  and the proposed `ci-fix.patch`. Check whether the patch is the fix you would write.
+- **E2E Tests → E2E Quality Gate** and **Dockerfile Review → Dockerfile Gate** for the E2E and Dockerfile branches.
+
+Keep the branches one commit ahead of `main`: on branch builds, change detection compares `HEAD~1..HEAD`. To refresh
+a branch after `main` moves, rebase it (`git rebase origin/main`) and force-push.
 
 ### Run the E2E suite locally
 
 ```bash
 # start the three services as in "Run the services locally", then:
 node tests/e2e/run.mjs        # writes tests/e2e/reports/{junit-*.xml,outputs.env,evidence/e2e-summary.json}
-git apply demo/e2e-scenarios/regression.patch      # try a scenario; undo with git apply -R
 ```
 
 ## Run the services locally

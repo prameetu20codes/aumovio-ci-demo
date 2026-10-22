@@ -44,9 +44,6 @@ trigger:
         - name: force_all
           type: String
           value: "false"
-        - name: e2e_scenario
-          type: String
-          value: none
         - name: outdated_test_policy
           type: String
           value: warn

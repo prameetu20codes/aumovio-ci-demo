@@ -3,7 +3,7 @@ pipeline:
   identifier: aumovio_monorepo_ci_agentic
   projectIdentifier: testproj
   orgIdentifier: testprameet
-  description: "Aumovio monorepo CI extended with Harness Worker Agents: an AI workflow router that can only escalate a deterministic plan, cross-service E2E tests with AI failure triage (regression vs outdated test) and a fail-closed quality gate, an AI Dockerfile and build-cache optimizer behind a hadolint gate, AI code review on pull requests and AI autofix on failure. Build, test and security stages are identical to aumovio_monorepo_ci."
+  description: "Aumovio monorepo CI extended with Harness Worker Agents: an AI workflow router that can only escalate a deterministic plan, cross-service E2E tests with AI failure triage (regression vs outdated test) and a fail-closed quality gate, an AI Dockerfile and build-cache optimizer behind a hadolint gate, AI code review on pull requests, and AI root-cause triage with a proposed patch whenever the build fails. Build, test and security stages match aumovio_monorepo_ci, except that SAST fails on high-severity findings."
   tags:
     customer: aumovio
     module: ci
@@ -26,12 +26,7 @@ pipeline:
       type: String
       description: Set to true to build every service even if its folder did not change.
       required: false
-      value: <+input>.default(false).allowedValues(true,false)
-    - name: e2e_scenario
-      type: String
-      description: "Demo only: inject a known change before E2E. regression breaks the telemetry speed average; outdated_test renames a dashboard field on purpose."
-      required: false
-      value: <+input>.default(none).allowedValues(none,regression,outdated_test)
+      value: <+input>.default(false).selectOneFrom(true,false)
     - name: triage_confidence_threshold
       type: String
       description: Minimum triage confidence (0-100) for an agent verdict to influence the E2E gate. Below it, failures always block.
@@ -41,7 +36,7 @@ pipeline:
       type: String
       description: warn lets the build continue when every E2E failure is a confident OUTDATED_TEST verdict; block fails it until the tests are updated.
       required: true
-      value: <+input>.default(warn).allowedValues(warn,block)
+      value: <+input>.default(warn).selectOneFrom(warn,block)
   notificationRules:
     - name: CI failure to Slack
       identifier: ci_failure_to_slack
@@ -165,7 +160,7 @@ pipeline:
                             advanced:
                               log:
                                 level: info
-                              fail_on_severity: none
+                              fail_on_severity: high
                           timeout: 15m
                       - step:
                           type: OsvScanner
@@ -238,7 +233,6 @@ pipeline:
                           PR_NUMBER: <+codebase.prNumber>
                           BRANCH: <+codebase.branch>
                           FORCE_ALL: <+pipeline.variables.force_all>
-                          E2E_SCENARIO: <+pipeline.variables.e2e_scenario>
                         outputVariables:
                           - name: BASELINE_RUN_E2E
                           - name: BASELINE_RUN_DOCKERFILE_REVIEW
@@ -956,31 +950,6 @@ pipeline:
                 spec: {}
               execution:
                 steps:
-                  - step:
-                      type: Run
-                      name: Apply Demo Scenario
-                      identifier: apply_demo_scenario
-                      spec:
-                        connectorRef: ffdockerconnector
-                        image: node:20
-                        shell: Bash
-                        command: |-
-                          set -euo pipefail
-                          case "$E2E_SCENARIO" in
-                            regression|outdated_test) ;;
-                            *) echo "e2e_scenario must be exactly one of none, regression, outdated_test (got '${E2E_SCENARIO}')."; exit 1 ;;
-                          esac
-                          PATCH="demo/e2e-scenarios/${E2E_SCENARIO}.patch"
-                          echo "Injecting demo scenario '${E2E_SCENARIO}':"
-                          sed -n '1,/^---$/p' "$PATCH"
-                          git apply --verbose "$PATCH"
-                          git diff --stat
-                        envVariables:
-                          E2E_SCENARIO: <+pipeline.variables.e2e_scenario>
-                      when:
-                        stageStatus: Success
-                        condition: <+pipeline.variables.e2e_scenario> != "none"
-                      timeout: 2m
                   - parallel:
                       - step:
                           type: Run
@@ -1095,7 +1064,6 @@ pipeline:
                           PR_NUMBER: <+codebase.prNumber>
                           BRANCH: <+codebase.branch>
                           FORCE_ALL: <+pipeline.variables.force_all>
-                          E2E_SCENARIO: <+pipeline.variables.e2e_scenario>
                       when:
                         stageStatus: Success
                         condition: <+execution.steps.run_e2e.output.outputVariables.E2E_NEEDS_TRIAGE> == "true"
@@ -1321,9 +1289,9 @@ pipeline:
                   action:
                     type: MarkAsFailure
     - stage:
-        name: AI Autofix
-        identifier: ai_autofix
-        description: Runs only when an earlier stage failed. The Harness-managed Autofix agent analyses the failure and proposes a fix for human review.
+        name: CI Failure Triage
+        identifier: ci_failure_triage
+        description: Runs only when an earlier stage failed. Collects the failed stages and steps, reproduces failing unit tests, and lets the CI Failure Triage agent diagnose the root cause and propose a patch. Diagnostic only; it never changes code.
         type: CI
         when:
           pipelineStatus: Failure
@@ -1342,21 +1310,151 @@ pipeline:
           execution:
             steps:
               - step:
-                  type: Agent
-                  name: Autofix - AI
-                  identifier: autofix
+                  type: Run
+                  name: Collect Failure Context
+                  identifier: collect_failure_context
                   spec:
-                    agentName: autofixAgent
+                    connectorRef: ffdockerconnector
+                    image: node:20
+                    shell: Bash
+                    command: |-
+                      set -euo pipefail
+                      node scripts/ci/change-context.mjs > /dev/null
+                      node scripts/ci/failure-context.mjs
+                      set -a; . "$AGENT_DIR/failure/repro.env"; set +a
+                    envVariables:
+                      BUILD_TYPE: <+codebase.build.type>
+                      BASE_SHA: <+codebase.baseCommitSha>
+                      PR_NUMBER: <+codebase.prNumber>
+                      BRANCH: <+codebase.branch>
+                      FORCE_ALL: <+pipeline.variables.force_all>
+                      ACCOUNT_ID: <+account.identifier>
+                      ORG_ID: <+org.identifier>
+                      PROJECT_ID: <+project.identifier>
+                      EXECUTION_ID: <+pipeline.executionId>
+                    outputVariables:
+                      - name: REPRO_GO
+                      - name: REPRO_JAVA
+                      - name: REPRO_NODE
+                  timeout: 5m
+              - parallel:
+                  - step:
+                      type: Run
+                      name: Reproduce Go Unit Tests
+                      identifier: repro_go_tests
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: golang:1.24
+                        shell: Bash
+                        command: |-
+                          cd services/telemetry-ingest
+                          (go test ./... 2>&1 || true) | tail -n 300 > "$AGENT_DIR/failure/go-tests.log"
+                          cat "$AGENT_DIR/failure/go-tests.log"
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.collect_failure_context.output.outputVariables.REPRO_GO> == "true"
+                      timeout: 10m
+                  - step:
+                      type: Run
+                      name: Reproduce Java Unit Tests
+                      identifier: repro_java_tests
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: maven:3.9.9-eclipse-temurin-17
+                        shell: Bash
+                        command: |-
+                          (mvn -B -ntp -f services/fleet-service/pom.xml -Dmaven.build.cache.enabled=false test 2>&1 || true) \
+                            | grep -v -E '^\[INFO\] (Download|Progress)' | tail -n 300 > "$AGENT_DIR/failure/java-tests.log"
+                          cat "$AGENT_DIR/failure/java-tests.log"
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.collect_failure_context.output.outputVariables.REPRO_JAVA> == "true"
+                      timeout: 15m
+                  - step:
+                      type: Run
+                      name: Reproduce Node Unit Tests
+                      identifier: repro_node_tests
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          cd services/dashboard-api
+                          npm ci --ignore-scripts --no-audit --no-fund > /dev/null 2>&1 || true
+                          (npx jest --ci 2>&1 || true) | tail -n 300 > "$AGENT_DIR/failure/node-tests.log"
+                          cat "$AGENT_DIR/failure/node-tests.log"
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.collect_failure_context.output.outputVariables.REPRO_NODE> == "true"
+                      timeout: 10m
+              - step:
+                  type: Agent
+                  name: Triage CI Failure - AI
+                  identifier: triage_ci_failure
+                  spec:
+                    agentName: ca_ci_failure_triage_agent
                     agentSettings:
-                      execution_id: <+pipeline.executionId>
-                      source_pipeline_id: <+pipeline.identifier>
-                      repo: prameetu20codes/aumovio-ci-demo
-                      branch: <+codebase.branch>
-                      mcp_connectors:
-                        - mcpconnector
-                      llm_connector: account.harnessAnthropic
-                      model_name: claude-sonnet-4-6
-                  timeout: 30m
+                      changeContextPath: /harness/.agent/change/context.md
+                      diffPath: /harness/.agent/change/diff.patch
+                      failuresPath: /harness/.agent/failure/failures.md
+                      failureDir: /harness/.agent/failure
+                      outputDir: /harness/.agent/output
+                      repository: prameetu20codes/aumovio-ci-demo
+                  timeout: 25m
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: Retry
+                          spec:
+                            retryCount: 1
+                            retryIntervals:
+                              - 15s
+                            onRetryFailure:
+                              action:
+                                type: MarkAsSuccess
+              - step:
+                  type: Run
+                  name: Publish Triage Report
+                  identifier: publish_triage_report
+                  spec:
+                    connectorRef: ffdockerconnector
+                    image: node:20
+                    shell: Bash
+                    command: |-
+                      set -uo pipefail
+                      echo "Category:   ${FAILURE_CATEGORY}"
+                      echo "Confidence: ${CONFIDENCE}"
+                      echo "Root cause: ${ROOT_CAUSE}"
+                      echo "Files:      ${SUSPECT_FILES}"
+                      echo
+                      if [ -f "$AGENT_DIR/output/ci-triage.md" ]; then
+                        cat "$AGENT_DIR/output/ci-triage.md"
+                      else
+                        echo "The triage agent produced no report; see $AGENT_DIR/failure/failures.md:"
+                        cat "$AGENT_DIR/failure/failures.md" 2>/dev/null || true
+                      fi
+                      if [ -s "$AGENT_DIR/output/ci-fix.patch" ]; then
+                        echo
+                        echo "----- Proposed fix (apply with: git apply ci-fix.patch) -----"
+                        cat "$AGENT_DIR/output/ci-fix.patch"
+                      fi
+                    envVariables:
+                      FAILURE_CATEGORY: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_agent_1.output.outputVariables.FAILURE_CATEGORY>
+                      CONFIDENCE: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_agent_1.output.outputVariables.CONFIDENCE>
+                      ROOT_CAUSE: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_agent_1.output.outputVariables.ROOT_CAUSE>
+                      SUSPECT_FILES: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_agent_1.output.outputVariables.SUSPECT_FILES>
+                  when:
+                    stageStatus: All
+                  timeout: 5m
+        variables:
+          - name: AGENT_DIR
+            type: String
+            value: /harness/.agent
+          - name: GOFLAGS
+            type: String
+            value: "-buildvcs=false"
         failureStrategies:
           - onFailure:
               errors:

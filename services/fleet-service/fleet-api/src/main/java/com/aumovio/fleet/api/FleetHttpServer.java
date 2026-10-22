@@ -39,7 +39,8 @@ public final class FleetHttpServer {
 
     /** Starts the server. Pass port 0 to bind an ephemeral port. Returns the bound port. */
     public int start(int port) throws IOException {
-        server = HttpServer.create(new InetSocketAddress(port), 0);
+        // Binds a local listening port; no outbound request is made, so the SSRF rule does not apply.
+        server = HttpServer.create(new InetSocketAddress(port), 0); // nosemgrep: gitlab.find_sec_bugs.URLCONNECTION_SSRF_FD-1
         server.createContext("/healthz", ex -> respond(ex, 200, Map.of("status", "ok", "version", version)));
         server.createContext("/v1/vehicles", this::vehicles);
         server.createContext("/v1/fleet/report", ex -> respond(ex, 200, report()));

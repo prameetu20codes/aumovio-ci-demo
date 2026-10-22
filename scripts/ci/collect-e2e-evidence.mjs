@@ -37,7 +37,7 @@ const TEST_TO_SERVICES = {
 const SERVICE_LOG = { 'telemetry-ingest': 'telemetry-ingest.log', 'fleet-service': 'fleet-service.log', 'dashboard-api': 'dashboard-api.log' };
 
 const summary = readJson(join(reportDir, 'evidence', 'e2e-summary.json'), { status: 'MISSING', failures: [], flakyTests: [], services: [] });
-const change = readJson(join(agentDir, 'change', 'context.json'), { files: [], commits: [], scenario: 'none' });
+const change = readJson(join(agentDir, 'change', 'context.json'), { files: [], commits: [] });
 const changedIn = (service, kinds) => change.files.filter((f) => f.service === service && kinds.includes(f.kind)).map((f) => f.path);
 
 const failures = summary.failures.map((f) => {
@@ -67,7 +67,6 @@ const evidence = {
   failedConsistently: summary.failedConsistently,
   flaky: summary.flaky,
   serviceHealth: summary.services,
-  scenario: change.scenario,
   commits: change.commits,
   failures,
   flakyTests: summary.flakyTests,

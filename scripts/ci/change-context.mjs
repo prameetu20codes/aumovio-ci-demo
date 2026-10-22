@@ -6,7 +6,6 @@
 // Inputs (environment):
 //   BUILD_TYPE, BASE_SHA, PR_NUMBER, BRANCH   codebase expressions, same as detect-changes.sh
 //   FORCE_ALL                                 "true" runs every workflow
-//   E2E_SCENARIO                              none | regression | outdated_test
 //   AGENT_DIR                                 evidence root (default /harness/.agent)
 //
 // Outputs:
@@ -16,7 +15,7 @@
 //   $AGENT_DIR/change/baseline.env   BASELINE_* variables for the pipeline
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const env = process.env;
@@ -57,7 +56,7 @@ function classify(path) {
   const service = Object.entries(SERVICES).find(([, s]) => path.startsWith(s.dir))?.[0] || null;
   let kind = 'other';
   if (/(^|\/)Dockerfile[^/]*$|(^|\/)\.dockerignore$/.test(path)) kind = 'dockerfile';
-  else if (/^(tests\/e2e|demo\/e2e-scenarios)\//.test(path)) kind = 'e2e';
+  else if (/^tests\/e2e\//.test(path)) kind = 'e2e';
   else if (/(_test\.go|\.test\.[cm]?js|Test\.java|Tests\.java)$|\/test\//.test(path)) kind = 'unit-test';
   else if (/(^|\/)(go\.mod|go\.sum|pom\.xml|package(-lock)?\.json)$/.test(path)) kind = 'dependencies';
   else if (/^(\.harness|scripts\/ci|harness-manual)\/|^\.ticonfig\.yaml$/.test(path)) kind = 'ci';
@@ -68,7 +67,6 @@ function classify(path) {
 }
 
 const forceAll = env.FORCE_ALL === 'true';
-const scenario = ['regression', 'outdated_test'].includes(env.E2E_SCENARIO) ? env.E2E_SCENARIO : 'none';
 const range = forceAll ? null : resolveRange();
 
 let files = [];
@@ -88,20 +86,6 @@ if (range) {
   });
 }
 
-// A demo scenario is applied to the workspace at runtime, so it is part of what gets tested.
-if (scenario !== 'none') {
-  const patchPath = `demo/e2e-scenarios/${scenario}.patch`;
-  if (existsSync(patchPath)) {
-    const patch = readFileSync(patchPath, 'utf8');
-    diff = `# Injected demo scenario: ${patchPath}\n${patch}\n${diff}`;
-    const subject = (patch.match(/^Subject: (.*)$/m) || [])[1] || scenario;
-    commits.unshift({ sha: 'scenario', author: 'demo', subject });
-    for (const m of patch.matchAll(/^\+\+\+ b\/(.+)$/gm)) {
-      if (!files.some((f) => f.path === m[1])) files.push(classify(m[1]));
-    }
-  }
-}
-
 const truncated = Buffer.byteLength(diff) > MAX_DIFF_BYTES;
 if (truncated) diff = diff.slice(0, MAX_DIFF_BYTES) + '\n# [diff truncated]\n';
 
@@ -112,10 +96,9 @@ const runtimeKinds = ['source', 'dependencies', 'config', 'dockerfile', 'e2e', '
 const noDiff = !range && !forceAll;
 
 const reasons = [];
-let runE2E = forceAll || noDiff || scenario !== 'none' || files.some((f) => runtimeKinds.includes(f.kind));
+let runE2E = forceAll || noDiff || files.some((f) => runtimeKinds.includes(f.kind));
 if (forceAll) reasons.push('force_all requested');
 if (noDiff) reasons.push('no diff base available, running every workflow');
-if (scenario !== 'none') reasons.push(`demo scenario "${scenario}" injected`);
 if (files.some((f) => runtimeKinds.includes(f.kind))) reasons.push('runtime-affecting files changed');
 
 const runDockerfileReview = forceAll || noDiff || kinds.has('dockerfile') || kinds.has('dependencies');
@@ -140,7 +123,6 @@ const context = {
   base: range?.base || null,
   branch: env.BRANCH || null,
   prNumber: isSet(env.PR_NUMBER) ? env.PR_NUMBER : null,
-  scenario,
   commits,
   services,
   linesChanged,
@@ -162,7 +144,6 @@ writeFileSync(
   [
     '# Change context',
     `- Diff: ${context.diffKind}${context.base ? ` against ${context.base}` : ''}; branch ${context.branch || 'n/a'}; PR ${context.prNumber || 'n/a'}`,
-    `- Demo scenario: ${scenario}`,
     `- Services touched: ${services.join(', ') || 'none'}; lines changed: ${linesChanged}${truncated ? ' (diff truncated)' : ''}`,
     '',
     '## Commits',
