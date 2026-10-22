@@ -19,16 +19,14 @@ type VehicleStats struct {
 // Aggregator keeps per-vehicle statistics in memory. It is safe for
 // concurrent use by multiple HTTP handlers.
 type Aggregator struct {
-	mu       sync.RWMutex
-	stats    map[string]*VehicleStats
-	speedSum map[string]float64
+	mu    sync.RWMutex
+	stats map[string]*VehicleStats
 }
 
 // NewAggregator returns an empty Aggregator.
 func NewAggregator() *Aggregator {
 	return &Aggregator{
-		stats:    make(map[string]*VehicleStats),
-		speedSum: make(map[string]float64),
+		stats: make(map[string]*VehicleStats),
 	}
 }
 
@@ -47,8 +45,12 @@ func (a *Aggregator) Add(r Reading) []Alert {
 	}
 
 	s.Samples++
-	a.speedSum[r.VehicleID] += r.SpeedKph
-	s.AvgSpeedKph = a.speedSum[r.VehicleID] / float64(s.Samples)
+	// Rolling average without keeping a per-vehicle sum.
+	if s.Samples == 1 {
+		s.AvgSpeedKph = r.SpeedKph
+	} else {
+		s.AvgSpeedKph = (s.AvgSpeedKph + r.SpeedKph) / 2
+	}
 	if r.SpeedKph > s.MaxSpeedKph {
 		s.MaxSpeedKph = r.SpeedKph
 	}
