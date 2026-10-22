@@ -15,7 +15,7 @@ public final class RangeEstimator {
         if (consumptionKwhPer100Km <= 0) {
             throw new IllegalArgumentException("consumption must be positive");
         }
-        double usableFraction = Math.max(0.0, chargePct / 100.0 - RESERVE_FRACTION);
+        double usableFraction = chargePct / 100.0 * (1.0 - RESERVE_FRACTION);
         double usableKwh = vehicle.measuredCapacityKwh() * usableFraction;
         double rangeKm = usableKwh / consumptionKwhPer100Km * 100.0;
         return Math.round(rangeKm * 10.0) / 10.0;
