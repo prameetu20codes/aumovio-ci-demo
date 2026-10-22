@@ -261,11 +261,11 @@ codebase (build type *Git Branch*), then compare what the agents report with the
 | `scenario/unit-test-java` | range reserve applied as a multiplier instead of being subtracted | Java CI → unit tests | CI Failure Triage | `UNIT_TEST`, `RangeEstimator.java`, application bug |
 | `scenario/unit-test-node` | km to miles conversion inverted during a "units refactor" | Node CI → Jest | CI Failure Triage | `UNIT_TEST`, `units.js`, application bug |
 | `scenario/vulnerable-dependency` | `log4j-core 2.14.1` (Log4Shell) in fleet-core and `minimist 1.2.5` in dashboard-api | Code Security → OSV (critical) | CI Failure Triage | `VULNERABLE_DEPENDENCY`, upgrade to fixed versions |
-| `scenario/hardcoded-secret` | an AWS access key pair hard-coded in a dashboard-api export client | Code Security → Gitleaks | CI Failure Triage | `SECRET`, move to configuration and rotate |
-| `scenario/sast-injection` | a diagnostics endpoint that passes a query parameter to a shell | Code Security → Semgrep (high) | CI Failure Triage (and Code Review on a PR) | `SAST`, command injection, safe rewrite |
+| `scenario/hardcoded-secret` | a partner API token and an RSA signing key hard-coded in `dashboard-api/src/lib/partnerExport.js` | Code Security → Gitleaks | CI Failure Triage | `SECRET`, move to configuration and rotate |
+| `scenario/sast-injection` | a fleet-api document endpoint that builds a file path from the request URL | Code Security → Semgrep (high, `PATH_TRAVERSAL_IN`) | CI Failure Triage (and Code Review on a PR) | `SAST`, path traversal, normalise and confine to the docs directory |
 | `scenario/e2e-regression` | telemetry aggregator "refactor" with a wrong running average; Go unit tests still pass | E2E Tests → quality gate | E2E Failure Triage, then CI Failure Triage summarises | `REGRESSION` |
 | `scenario/e2e-outdated-test` | intentional dashboard API rename with unit tests updated, E2E test not updated | passes with a warning (`outdated_test_policy=warn`) or fails (`block`) | E2E Failure Triage | `OUTDATED_TEST` with the assertion change |
-| `scenario/dockerfile-issues` | dashboard-api image switched to `node:latest`, single stage, running as root | Dockerfile Review → gate | Dockerfile Optimizer, then CI Failure Triage | blocking findings: root user, mutable tag |
+| `scenario/dockerfile-issues` | dashboard-api image switched to `node:latest`, single stage, `COPY . .`, dev dependencies and debug tools installed, running as root | Dockerfile Review → gate | Dockerfile Optimizer, then CI Failure Triage | blocking findings: root user, mutable tag |
 | `scenario/mixed` | the Go unit-test bug, the hard-coded secret and the vulnerable dependency together | Go CI and Code Security | CI Failure Triage | `MIXED`, three separate root causes |
 
 What to look at in each run:
