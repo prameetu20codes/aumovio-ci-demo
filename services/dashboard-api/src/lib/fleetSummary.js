@@ -21,7 +21,7 @@ function summarizeFleet(snapshots, now = Date.now()) {
 
   return {
     vehicleCount: snapshots.length,
-    averageBatteryPercent: avgBattery,
+    avgBatteryPercent: avgBattery,
     statusCounts: counts,
     needsAttention: vehicles
       .filter((v) => v.status === 'CRITICAL' || v.status === 'WARNING')

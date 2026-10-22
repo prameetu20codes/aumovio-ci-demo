@@ -10,7 +10,7 @@ describe('summarizeFleet', () => {
     const summary = summarizeFleet(demoSnapshots(NOW), NOW);
 
     expect(summary.vehicleCount).toBe(3);
-    expect(summary.averageBatteryPercent).toBe(49);
+    expect(summary.avgBatteryPercent).toBe(49);
     expect(summary.statusCounts).toEqual({ OK: 1, INFO: 0, WARNING: 1, CRITICAL: 1 });
     expect(summary.needsAttention).toEqual(['VIN-1002', 'VIN-1003']);
   });
@@ -18,7 +18,7 @@ describe('summarizeFleet', () => {
   test('handles an empty fleet', () => {
     expect(summarizeFleet([], NOW)).toEqual({
       vehicleCount: 0,
-      averageBatteryPercent: null,
+      avgBatteryPercent: null,
       statusCounts: { OK: 0, INFO: 0, WARNING: 0, CRITICAL: 0 },
       needsAttention: [],
       vehicles: [],
