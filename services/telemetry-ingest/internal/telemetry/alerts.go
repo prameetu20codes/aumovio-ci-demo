@@ -32,7 +32,7 @@ func Evaluate(r Reading) []Alert {
 	switch {
 	case r.BatteryPercent <= LowBatteryCriticalPct:
 		alerts = append(alerts, Alert{Code: "BATTERY_LOW", Severity: SeverityCritical, Message: "battery critically low"})
-	case r.BatteryPercent <= LowBatteryWarningPct:
+	case r.BatteryPercent < LowBatteryWarningPct:
 		alerts = append(alerts, Alert{Code: "BATTERY_LOW", Severity: SeverityWarning, Message: "battery low"})
 	}
 
