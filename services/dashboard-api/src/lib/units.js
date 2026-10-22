@@ -1,7 +1,8 @@
 'use strict';
 
-const KM_PER_MILE = 1.609344;
-const KPA_PER_PSI = 6.894757;
+// Conversion factors, expressed as multipliers from metric to imperial.
+const MILES_PER_KM = 1.609344;
+const PSI_PER_KPA = 1 / 6.894757;
 
 function round(value, digits = 1) {
   const factor = 10 ** digits;
@@ -16,7 +17,7 @@ function assertFiniteNumber(value, name) {
 
 function kmToMiles(km) {
   assertFiniteNumber(km, 'km');
-  return round(km / KM_PER_MILE);
+  return round(km * MILES_PER_KM);
 }
 
 function celsiusToFahrenheit(c) {
@@ -26,7 +27,7 @@ function celsiusToFahrenheit(c) {
 
 function kpaToPsi(kpa) {
   assertFiniteNumber(kpa, 'kpa');
-  return round(kpa / KPA_PER_PSI);
+  return round(kpa * PSI_PER_KPA);
 }
 
 /**
