@@ -1,0 +1,18 @@
+inputSet:
+  name: dev
+  identifier: dev
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  pipeline:
+    identifier: aumovio_monorepo_ci
+    properties:
+      ci:
+        codebase:
+          build:
+            type: branch
+            spec:
+              branch: main
+    variables:
+      - name: force_all
+        type: String
+        value: "true"
