@@ -1392,12 +1392,12 @@ pipeline:
                   name: Triage CI Failure - AI
                   identifier: triage_ci_failure
                   spec:
-                    agentName: ca_ci_failure_triage_agent
+                    agentName: ca_ci_failure_triage
                     agentSettings:
                       changeContextPath: /harness/.agent/change/context.md
                       diffPath: /harness/.agent/change/diff.patch
-                      failuresPath: /harness/.agent/failure/failures.md
                       failureDir: /harness/.agent/failure
+                      failuresPath: /harness/.agent/failure/failures.md
                       outputDir: /harness/.agent/output
                       repository: prameetu20codes/aumovio-ci-demo
                   timeout: 25m
