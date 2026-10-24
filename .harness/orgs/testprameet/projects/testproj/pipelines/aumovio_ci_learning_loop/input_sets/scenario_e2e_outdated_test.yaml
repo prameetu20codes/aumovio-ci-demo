@@ -1,0 +1,18 @@
+inputSet:
+  name: scenario_e2e_outdated_test
+  identifier: scenario_e2e_outdated_test
+  description: Scenario branch scenario/e2e-outdated-test
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  pipeline:
+    identifier: aumovio_ci_learning_loop
+    variables:
+      - name: target_branch
+        type: String
+        value: scenario/e2e-outdated-test
+      - name: run_ci
+        type: String
+        value: "true"
+      - name: outdated_test_policy
+        type: String
+        value: warn

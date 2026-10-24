@@ -1,0 +1,347 @@
+pipeline:
+  name: Aumovio CI Learning Loop
+  identifier: aumovio_ci_learning_loop
+  projectIdentifier: testproj
+  orgIdentifier: testprameet
+  description: "Closed-loop CI learning. Chains Aumovio Monorepo CI - Agentic on a branch, then, after that execution has finished, puts the run into context with the Harness Knowledge Graph (HQL over earlier executions), lets the CI Remediation agent propose code, pipeline and strategy fixes using the playbook and the records of earlier loop runs, verifies the proposed code fix by re-running unit tests and scanners on a patched checkout, and publishes a learning record that the next loop run reads back. Report-only: nothing is committed."
+  tags:
+    customer: aumovio
+    module: ci
+    ai: worker-agents
+    knowledge-graph: "true"
+  properties:
+    ci:
+      codebase:
+        connectorRef: harnessiacm
+        repoName: aumovio-ci-demo
+        build:
+          type: branch
+          spec:
+            branch: <+pipeline.variables.target_branch>
+        sparseCheckout: []
+  variables:
+    - name: target_branch
+      type: String
+      description: Branch to build and learn from (main or a scenario/* branch).
+      required: true
+      value: <+input>.default(main)
+    - name: run_ci
+      type: String
+      description: true chains a CI run on target_branch first; false analyses history only (nightly trend run).
+      required: true
+      value: <+input>.default(true).selectOneFrom(true,false)
+    - name: outdated_test_policy
+      type: String
+      description: Passed to the chained CI run.
+      required: true
+      value: <+input>.default(warn).selectOneFrom(warn,block)
+    - name: lookback_days
+      type: String
+      description: Knowledge Graph look-back window in days.
+      required: true
+      value: "30"
+    - name: verify_fix
+      type: String
+      description: true applies the proposed code fix to this stage's checkout and re-runs unit tests and scanners against it.
+      required: true
+      value: "true"
+  stages:
+    - stage:
+        name: Run Agentic CI
+        identifier: run_agentic_ci
+        description: Chains the agentic CI pipeline on target_branch. Its CI Failure Triage stage runs inside that execution as usual.
+        type: Pipeline
+        spec:
+          org: testprameet
+          project: testproj
+          pipeline: aumovio_monorepo_ci_agentic
+          inputs:
+            identifier: aumovio_monorepo_ci_agentic
+            properties:
+              ci:
+                codebase:
+                  build:
+                    type: branch
+                    spec:
+                      branch: <+pipeline.variables.target_branch>
+            variables:
+              - name: force_all
+                type: String
+                value: "false"
+              - name: outdated_test_policy
+                type: String
+                value: <+pipeline.variables.outdated_test_policy>
+          outputs:
+            - name: EXECUTION_ID
+              value: <+pipeline.executionId>
+        when:
+          pipelineStatus: Success
+          condition: <+pipeline.variables.run_ci> == "true"
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: MarkAsFailure
+    - stage:
+        name: Learn and Remediate
+        identifier: learn_and_remediate
+        description: Runs whether the CI run passed or failed. Knowledge Graph analysis, remediation plan, fix verification and the learning record.
+        type: CI
+        when:
+          pipelineStatus: All
+        spec:
+          cloneCodebase: true
+          caching:
+            enabled: false
+          buildIntelligence:
+            enabled: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Collect Loop Context
+                  identifier: collect_loop_context
+                  spec:
+                    connectorRef: ffdockerconnector
+                    image: node:20
+                    shell: Bash
+                    command: |-
+                      set -uo pipefail
+                      node scripts/ci/learning/loop-context.mjs || echo "loop-context.mjs failed; the agents will use Harness MCP instead"
+                      set -a; . "$AGENT_DIR/loop/loop.env" 2>/dev/null; set +a
+                      HAS_CI_RUN=${HAS_CI_RUN:-false}; CI_FAILED=${CI_FAILED:-unknown}; CI_EXECUTION_ID=${CI_EXECUTION_ID:-}
+                    envVariables:
+                      ACCOUNT_ID: <+account.identifier>
+                      ORG_ID: <+org.identifier>
+                      PROJECT_ID: <+project.identifier>
+                      CI_PIPELINE_ID: aumovio_monorepo_ci_agentic
+                      LOOP_PIPELINE_ID: <+pipeline.identifier>
+                      LOOP_EXECUTION_ID: <+pipeline.executionId>
+                      CHILD_EXECUTION_ID: <+pipeline.stages.run_agentic_ci.output.EXECUTION_ID>
+                      RUN_CI: <+pipeline.variables.run_ci>
+                      TARGET_BRANCH: <+pipeline.variables.target_branch>
+                      COMMIT_SHA: <+codebase.commitSha>
+                    outputVariables:
+                      - name: HAS_CI_RUN
+                      - name: CI_FAILED
+                      - name: CI_EXECUTION_ID
+                  timeout: 5m
+              - step:
+                  type: Agent
+                  name: Knowledge Graph Insights - AI
+                  identifier: kg_insights
+                  spec:
+                    agentName: ca_ci_knowledge_graph
+                    agentSettings:
+                      ciPipelineId: aumovio_monorepo_ci_agentic
+                      targetBranch: <+pipeline.variables.target_branch>
+                      lookbackDays: <+pipeline.variables.lookback_days>
+                      loopDir: /harness/.agent/loop
+                      outputDir: /harness/.agent/loop/out
+                  timeout: 20m
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: Retry
+                          spec:
+                            retryCount: 1
+                            retryIntervals:
+                              - 15s
+                            onRetryFailure:
+                              action:
+                                type: MarkAsSuccess
+              - step:
+                  type: Agent
+                  name: Remediation Plan - AI
+                  identifier: remediate
+                  spec:
+                    agentName: ca_ci_remediation
+                    agentSettings:
+                      ciPipelineId: aumovio_monorepo_ci_agentic
+                      ciPipelinePath: .harness/orgs/testprameet/projects/testproj/pipelines/aumovio_monorepo_ci_agentic.yaml
+                      targetBranch: <+pipeline.variables.target_branch>
+                      kgStatus: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_1.output.outputVariables.KG_STATUS>
+                      kgFailurePattern: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_1.output.outputVariables.FAILURE_PATTERN>
+                      loopDir: /harness/.agent/loop
+                      outputDir: /harness/.agent/loop/out
+                  timeout: 30m
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: Retry
+                          spec:
+                            retryCount: 1
+                            retryIntervals:
+                              - 15s
+                            onRetryFailure:
+                              action:
+                                type: MarkAsSuccess
+              - step:
+                  type: Run
+                  name: Prepare Fix Verification
+                  identifier: prepare_verification
+                  spec:
+                    connectorRef: ffdockerconnector
+                    image: node:20
+                    shell: Bash
+                    command: |-
+                      set -uo pipefail
+                      node scripts/ci/learning/prepare-verification.mjs
+                      set -a; . "$VERIFY_DIR/verify.env"; set +a
+                    outputVariables:
+                      - name: CODE_PATCH
+                      - name: CODE_PATCH_APPLIES
+                      - name: PIPELINE_PATCH_APPLIES
+                      - name: VERIFY_GO
+                      - name: VERIFY_JAVA
+                      - name: VERIFY_NODE
+                      - name: VERIFY_SECURITY
+                  when:
+                    stageStatus: Success
+                    condition: <+pipeline.variables.verify_fix> == "true"
+                  timeout: 5m
+              - parallel:
+                  - step:
+                      type: Run
+                      name: Verify Fix - Go Tests
+                      identifier: verify_go
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: golang:1.24
+                        shell: Bash
+                        command: |-
+                          if (cd services/telemetry-ingest && go vet ./... && go test ./...) > "$VERIFY_DIR/go.log" 2>&1; then r=PASS; else r=FAIL; fi
+                          { echo "$r"; tail -n 150 "$VERIFY_DIR/go.log"; } > "$VERIFY_DIR/go.result"
+                          cat "$VERIFY_DIR/go.result"
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.prepare_verification.output.outputVariables.VERIFY_GO> == "true"
+                      timeout: 10m
+                  - step:
+                      type: Run
+                      name: Verify Fix - Java Tests
+                      identifier: verify_java
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: maven:3.9.9-eclipse-temurin-17
+                        shell: Bash
+                        command: |-
+                          if mvn -B -ntp -f services/fleet-service/pom.xml -Dmaven.build.cache.enabled=false test > "$VERIFY_DIR/java.log" 2>&1; then r=PASS; else r=FAIL; fi
+                          { echo "$r"; grep -v -E '^\[INFO\] (Download|Progress)' "$VERIFY_DIR/java.log" | tail -n 150; } > "$VERIFY_DIR/java.result"
+                          cat "$VERIFY_DIR/java.result"
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.prepare_verification.output.outputVariables.VERIFY_JAVA> == "true"
+                      timeout: 15m
+                  - step:
+                      type: Run
+                      name: Verify Fix - Node Lint and Tests
+                      identifier: verify_node
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          if (cd services/dashboard-api && npm ci --ignore-scripts --no-audit --no-fund && npx eslint . && npx jest --ci) > "$VERIFY_DIR/node.log" 2>&1; then r=PASS; else r=FAIL; fi
+                          { echo "$r"; tail -n 150 "$VERIFY_DIR/node.log"; } > "$VERIFY_DIR/node.result"
+                          cat "$VERIFY_DIR/node.result"
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.prepare_verification.output.outputVariables.VERIFY_NODE> == "true"
+                      timeout: 10m
+                  - step:
+                      type: Run
+                      name: Verify Fix - Secrets and Dependencies
+                      identifier: verify_secrets_deps
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          set -uo pipefail
+                          mkdir -p /tmp/bin
+                          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz -C /tmp/bin gitleaks
+                          curl -sSfL -o /tmp/bin/osv-scanner https://github.com/google/osv-scanner/releases/download/v2.2.2/osv-scanner_linux_amd64
+                          chmod +x /tmp/bin/osv-scanner
+                          GITLEAKS=/tmp/bin/gitleaks OSV_SCANNER=/tmp/bin/osv-scanner node scripts/ci/learning/security-verify.mjs
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.prepare_verification.output.outputVariables.VERIFY_SECURITY> == "true"
+                      timeout: 10m
+                  - step:
+                      type: Run
+                      name: Verify Fix - SAST
+                      identifier: verify_sast
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: semgrep/semgrep:latest
+                        runAsUser: "0"
+                        shell: Bash
+                        command: |-
+                          semgrep scan --config p/gitlab --severity ERROR --error --metrics=on --exclude .agent . > "$VERIFY_DIR/sast.log" 2>&1
+                          case $? in 0) r=PASS ;; 1) r=FAIL ;; *) r=ERROR ;; esac
+                          { echo "$r"; tail -n 150 "$VERIFY_DIR/sast.log"; } > "$VERIFY_DIR/sast.result"
+                          cat "$VERIFY_DIR/sast.result"
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.prepare_verification.output.outputVariables.VERIFY_SECURITY> == "true"
+                      timeout: 10m
+              - step:
+                  type: Run
+                  name: Publish Learning Record
+                  identifier: publish_learning
+                  spec:
+                    connectorRef: ffdockerconnector
+                    image: node:20
+                    shell: Bash
+                    command: |-
+                      set -uo pipefail
+                      node scripts/ci/learning/learning-record.mjs
+                      set -a; . "$AGENT_DIR/loop/learning.env"; set +a
+                    envVariables:
+                      LOOP_EXECUTION_ID: <+pipeline.executionId>
+                      TARGET_BRANCH: <+pipeline.variables.target_branch>
+                      COMMIT_SHA: <+codebase.commitSha>
+                      KG_STATUS: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_1.output.outputVariables.KG_STATUS>
+                      KG_FAILURE_PATTERN: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_1.output.outputVariables.FAILURE_PATTERN>
+                      KG_RECURRENCE_COUNT: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_1.output.outputVariables.RECURRENCE_COUNT>
+                      REM_PATTERN_KEY: <+execution.steps.remediate.steps.ca_ci_remediation_1.output.outputVariables.PATTERN_KEY>
+                      REM_REMEDIATION_TYPE: <+execution.steps.remediate.steps.ca_ci_remediation_1.output.outputVariables.REMEDIATION_TYPE>
+                      REM_ROOT_CAUSE: <+execution.steps.remediate.steps.ca_ci_remediation_1.output.outputVariables.ROOT_CAUSE>
+                      REM_LESSON: <+execution.steps.remediate.steps.ca_ci_remediation_1.output.outputVariables.LESSON>
+                      REM_CONFIDENCE: <+execution.steps.remediate.steps.ca_ci_remediation_1.output.outputVariables.CONFIDENCE>
+                    outputVariables:
+                      - name: LEARNING_RECORD_B64
+                      - name: FIX_VERIFICATION
+                      - name: PATTERN_KEY
+                      - name: REMEDIATION_TYPE
+                  when:
+                    stageStatus: All
+                  timeout: 5m
+        variables:
+          - name: AGENT_DIR
+            type: String
+            value: /harness/.agent
+          - name: VERIFY_DIR
+            type: String
+            value: /harness/.agent/loop/verify
+          - name: GOFLAGS
+            type: String
+            value: "-buildvcs=false"
+        failureStrategies:
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: MarkAsFailure

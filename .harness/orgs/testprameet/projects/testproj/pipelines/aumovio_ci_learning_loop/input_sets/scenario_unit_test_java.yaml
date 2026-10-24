@@ -1,0 +1,18 @@
+inputSet:
+  name: scenario_unit_test_java
+  identifier: scenario_unit_test_java
+  description: Scenario branch scenario/unit-test-java
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  pipeline:
+    identifier: aumovio_ci_learning_loop
+    variables:
+      - name: target_branch
+        type: String
+        value: scenario/unit-test-java
+      - name: run_ci
+        type: String
+        value: "true"
+      - name: outdated_test_policy
+        type: String
+        value: warn

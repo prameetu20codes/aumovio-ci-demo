@@ -1,0 +1,18 @@
+inputSet:
+  name: main
+  identifier: main
+  description: Baseline: main (expected green)
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  pipeline:
+    identifier: aumovio_ci_learning_loop
+    variables:
+      - name: target_branch
+        type: String
+        value: main
+      - name: run_ci
+        type: String
+        value: "true"
+      - name: outdated_test_policy
+        type: String
+        value: warn

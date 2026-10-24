@@ -1,0 +1,18 @@
+inputSet:
+  name: scenario_sast_injection
+  identifier: scenario_sast_injection
+  description: Scenario branch scenario/sast-injection
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  pipeline:
+    identifier: aumovio_ci_learning_loop
+    variables:
+      - name: target_branch
+        type: String
+        value: scenario/sast-injection
+      - name: run_ci
+        type: String
+        value: "true"
+      - name: outdated_test_policy
+        type: String
+        value: warn

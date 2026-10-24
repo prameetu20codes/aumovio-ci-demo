@@ -1,0 +1,18 @@
+inputSet:
+  name: scenario_dockerfile_issues
+  identifier: scenario_dockerfile_issues
+  description: Scenario branch scenario/dockerfile-issues
+  orgIdentifier: testprameet
+  projectIdentifier: testproj
+  pipeline:
+    identifier: aumovio_ci_learning_loop
+    variables:
+      - name: target_branch
+        type: String
+        value: scenario/dockerfile-issues
+      - name: run_ci
+        type: String
+        value: "true"
+      - name: outdated_test_policy
+        type: String
+        value: warn

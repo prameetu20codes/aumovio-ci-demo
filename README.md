@@ -279,6 +279,46 @@ What to look at in each run:
 Keep the branches one commit ahead of `main`: on branch builds, change detection compares `HEAD~1..HEAD`. To refresh
 a branch after `main` moves, rebase it (`git rebase origin/main`) and force-push.
 
+### CI learning loop with the Harness Knowledge Graph
+
+`aumovio_ci_learning_loop` wraps the agentic pipeline in a closed learning loop. It is report-only: agents write
+patches and a playbook proposal as files, and nothing is committed.
+
+```mermaid
+flowchart LR
+  A[Run Agentic CI<br/>chained pipeline stage] --> B[Collect Loop Context<br/>run, history, memory, playbook, diff]
+  B --> C[Knowledge Graph agent<br/>HQL over past executions]
+  C --> D[Remediation agent<br/>code, pipeline, strategy fixes]
+  D --> E[Verify fix<br/>patched checkout: unit tests, Gitleaks, OSV, Semgrep]
+  E --> F[Publish Learning Record<br/>LEARNING_RECORD_B64]
+  F -. read back by the next loop run .-> B
+```
+
+| Stage / step | What it does |
+|---|---|
+| Run Agentic CI | Pipeline chaining: runs `aumovio_monorepo_ci_agentic` on `target_branch`. Because the learning stage starts after that execution has finished, it never waits on a running execution. |
+| Collect Loop Context | `scripts/ci/learning/loop-context.mjs`: failed stages and steps and the CI Failure Triage verdict of the chained run, the last 20 CI executions, learning records of the last 10 loop runs (memory), `knowledge/ci-playbook.md` from `main`, and the branch diff against `main`. |
+| Knowledge Graph Insights | `ca_ci_knowledge_graph` agent. Uses the Harness MCP Knowledge Graph tools (`hql_query`, `kg_grammar`, `kg_queryable_type_summary`) to classify each failure as NEW, RECURRING, FLAKY or INFRA and report failure rates, slow steps and fix history. |
+| Remediation Plan | `ca_ci_remediation` agent. Reuses fixes that were verified before, never repeats a fix that failed verification, and proposes `code-fix.patch`, `pipeline-fix.patch` (for the agentic pipeline), strategy changes and an updated `ci-playbook.md`. |
+| Verify Fix | Applies `code-fix.patch` to this stage's checkout and re-runs the affected unit tests, plus Gitleaks, OSV (critical) and Semgrep (high) when security is involved. |
+| Publish Learning Record | Prints the full report and exports `LEARNING_RECORD_B64`, `FIX_VERIFICATION` (VERIFIED, FAILED, NO_PATCH, ...), `PATTERN_KEY` and `REMEDIATION_TYPE`. The next loop run reads these back as memory. |
+
+How it learns: the Knowledge Graph supplies execution history, the learning records supply what the agents concluded
+and whether the fix was verified, and the playbook holds the knowledge a human has approved. Committing the proposed
+`ci-playbook.md` is the review step that promotes a lesson into the playbook.
+
+Setup:
+
+1. Create two Worker Agents from `harness-manual/agents/ci_knowledge_graph_agent.yaml` (identifier
+   `ca_ci_knowledge_graph`) and `harness-manual/agents/ci_remediation_agent.yaml` (identifier `ca_ci_remediation`).
+2. Import or reload `aumovio_ci_learning_loop` from Git (branch `main`), along with its input sets.
+3. Optional: create the nightly trend trigger from `harness-manual/triggers/learning_loop_nightly.yaml`
+   (`run_ci=false`, analyses history only).
+
+Run it with an input set: `main`, `trend_history_only`, or `scenario_<name>` for each scenario branch. Run the same
+scenario twice to see the loop learn: the second run should report the pattern as RECURRING and reuse the fix that
+was verified the first time.
+
 ### Run the E2E suite locally
 
 ```bash
