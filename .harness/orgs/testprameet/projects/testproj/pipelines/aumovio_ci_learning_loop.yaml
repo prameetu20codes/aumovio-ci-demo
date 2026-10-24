@@ -138,13 +138,13 @@ pipeline:
                   name: Knowledge Graph Insights - AI
                   identifier: kg_insights
                   spec:
-                    agentName: ca_ci_knowledge_graph
+                    agentName: ca_ci_knowledge_graph_analyst
                     agentSettings:
                       ciPipelineId: aumovio_monorepo_ci_agentic
-                      targetBranch: <+pipeline.variables.target_branch>
-                      lookbackDays: <+pipeline.variables.lookback_days>
+                      lookbackDays: "30"
                       loopDir: /harness/.agent/loop
                       outputDir: /harness/.agent/loop/out
+                      targetBranch: main
                   timeout: 20m
                   failureStrategies:
                     - onFailure:
