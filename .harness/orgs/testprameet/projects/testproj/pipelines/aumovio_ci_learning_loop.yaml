@@ -3,12 +3,13 @@ pipeline:
   identifier: aumovio_ci_learning_loop
   projectIdentifier: testproj
   orgIdentifier: testprameet
-  description: "Closed-loop CI learning. Chains Aumovio Monorepo CI - Agentic on a branch, then, after that execution has finished, puts the run into context with the Harness Knowledge Graph (HQL over earlier executions), lets the CI Remediation agent propose code, pipeline and strategy fixes using the playbook and the records of earlier loop runs, verifies the proposed code fix by re-running unit tests and scanners on a patched checkout, and publishes a learning record that the next loop run reads back. Report-only: nothing is committed."
+  description: "Closed-loop agentic CI. Runs every stage of Aumovio Monorepo CI - Agentic (workflow router, build, test, security, E2E with AI triage, Dockerfile review, AI code review on PRs, CI Failure Triage), then a Learn and Remediate stage that puts this run into context with the Harness Knowledge Graph (HQL over earlier executions), lets the CI Remediation agent propose code, pipeline and strategy fixes using the playbook and the records of earlier loop runs, verifies the proposed code fix on a patched checkout, and publishes a learning record that the next run reads back. Report-only: nothing is committed. Run only the Learn and Remediate stage for a history-only trend analysis."
   tags:
     customer: aumovio
     module: ci
     ai: worker-agents
     knowledge-graph: "true"
+  allowStageExecutions: true
   properties:
     ci:
       codebase:
@@ -25,14 +26,24 @@ pipeline:
       description: Branch to build and learn from (main or a scenario/* branch).
       required: true
       value: <+input>.default(main)
-    - name: run_ci
+    - name: har_registry
       type: String
-      description: true chains a CI run on target_branch first; false analyses history only (nightly trend run).
+      description: Harness Artifact Registry (Docker) that receives the images built by this pipeline.
       required: true
-      value: <+input>.default(true).selectOneFrom(true,false)
+      value: aumovio-snapshot
+    - name: force_all
+      type: String
+      description: Set to true to build every service even if its folder did not change.
+      required: false
+      value: <+input>.default(false).selectOneFrom(true,false)
+    - name: triage_confidence_threshold
+      type: String
+      description: Minimum triage confidence (0-100) for an agent verdict to influence the E2E gate. Below it, failures always block.
+      required: true
+      value: "80"
     - name: outdated_test_policy
       type: String
-      description: Passed to the chained CI run.
+      description: warn lets the build continue when every E2E failure is a confident OUTDATED_TEST verdict; block fails it until the tests are updated.
       required: true
       value: <+input>.default(warn).selectOneFrom(warn,block)
     - name: lookback_days
@@ -42,41 +53,1416 @@ pipeline:
       value: "30"
     - name: verify_fix
       type: String
-      description: true applies the proposed code fix to this stage's checkout and re-runs unit tests and scanners against it.
+      description: true applies the proposed code fix to the learning stage checkout and re-runs unit tests and scanners against it.
       required: true
       value: "true"
   stages:
     - stage:
-        name: Run Agentic CI
-        identifier: run_agentic_ci
-        description: Chains the agentic CI pipeline on target_branch. Its CI Failure Triage stage runs inside that execution as usual.
-        type: Pipeline
+        name: Detect Changes
+        identifier: detect_changes
+        description: Diffs the PR against its base and exports which services changed.
+        type: CI
         spec:
-          org: testprameet
-          project: testproj
-          pipeline: aumovio_monorepo_ci_agentic
-          inputs:
-            identifier: aumovio_monorepo_ci_agentic
-            properties:
-              ci:
-                codebase:
-                  build:
-                    type: branch
+          cloneCodebase: true
+          caching:
+            enabled: false
+          buildIntelligence:
+            enabled: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Detect Changes
+                  identifier: detect_changes
+                  spec:
+                    shell: Bash
+                    command: . scripts/ci/detect-changes.sh
+                    envVariables:
+                      BUILD_TYPE: <+codebase.build.type>
+                      BASE_SHA: <+codebase.baseCommitSha>
+                      PR_NUMBER: <+codebase.prNumber>
+                      BRANCH: <+codebase.branch>
+                      SHORT_SHA: <+codebase.shortCommitSha>
+                      FORCE_ALL: <+pipeline.variables.force_all>
+                      HARNESS_ACCOUNT: <+account.identifier>
+                      HAR_REGISTRY: <+pipeline.variables.har_registry>
+                    outputVariables:
+                      - name: GO_CHANGED
+                      - name: JAVA_CHANGED
+                      - name: NODE_CHANGED
+                      - name: IMAGE_TAG
+                      - name: HAR_REPO_PATH
+                      - name: HAR_IMAGE_PREFIX
+                  timeout: 5m
+        failureStrategies:
+          - onFailure:
+              errors:
+                - Connectivity
+                - Timeout
+              action:
+                type: Retry
+                spec:
+                  retryCount: 2
+                  retryIntervals:
+                    - 10s
+                  onRetryFailure:
+                    action:
+                      type: MarkAsFailure
+          - onFailure:
+              errors:
+                - AllErrors
+              action:
+                type: MarkAsFailure
+    - parallel:
+        - stage:
+            name: Code Security
+            identifier: code_security
+            description: Secret detection, SAST and SCA across the whole repository.
+            type: CI
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: false
+              buildIntelligence:
+                enabled: false
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - parallel:
+                      - step:
+                          type: Gitleaks
+                          name: Secret Detection - Gitleaks
+                          identifier: secret_detection_gitleaks
+                          spec:
+                            mode: orchestration
+                            config: default
+                            target:
+                              type: repository
+                              detection: auto
+                            advanced:
+                              log:
+                                level: info
+                              fail_on_severity: high
+                          timeout: 15m
+                      - step:
+                          type: Semgrep
+                          name: SAST - Semgrep
+                          identifier: sast_semgrep
+                          spec:
+                            mode: orchestration
+                            config: default
+                            target:
+                              type: repository
+                              detection: auto
+                            advanced:
+                              log:
+                                level: info
+                              fail_on_severity: high
+                          timeout: 15m
+                      - step:
+                          type: OsvScanner
+                          name: SCA - OSV Scanner
+                          identifier: sca_osv
+                          spec:
+                            mode: orchestration
+                            config: default
+                            target:
+                              type: repository
+                              detection: auto
+                            advanced:
+                              log:
+                                level: info
+                              fail_on_severity: critical
+                          timeout: 15m
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
                     spec:
-                      branch: <+pipeline.variables.target_branch>
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+        - stage:
+            name: Change Intelligence
+            identifier: change_intelligence
+            description: Deterministic change analysis plus the Workflow Router agent. The agent can only escalate the baseline plan that decides whether E2E and the Dockerfile review run.
+            type: CI
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: false
+              buildIntelligence:
+                enabled: false
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - step:
+                      type: Run
+                      name: Collect Change Context
+                      identifier: collect_change_context
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          node scripts/ci/change-context.mjs
+                          set -a; . "$AGENT_DIR/change/baseline.env"; set +a
+                        envVariables:
+                          BUILD_TYPE: <+codebase.build.type>
+                          BASE_SHA: <+codebase.baseCommitSha>
+                          PR_NUMBER: <+codebase.prNumber>
+                          BRANCH: <+codebase.branch>
+                          FORCE_ALL: <+pipeline.variables.force_all>
+                        outputVariables:
+                          - name: BASELINE_RUN_E2E
+                          - name: BASELINE_RUN_DOCKERFILE_REVIEW
+                          - name: BASELINE_RISK_LEVEL
+                          - name: BASELINE_CHANGE_CATEGORY
+                      timeout: 5m
+                  - step:
+                      type: Agent
+                      name: Route Workflow - AI
+                      identifier: route_workflow
+                      spec:
+                        agentName: ca_workflow_router
+                        agentSettings:
+                          changeContextPath: /harness/.agent/change/context.md
+                          diffPath: /harness/.agent/change/diff.patch
+                          outputDir: /harness/.agent/output
+                          repository: prameetu20codes/aumovio-ci-demo
+                      timeout: 15m
+                      failureStrategies:
+                        - onFailure:
+                            errors:
+                              - AllErrors
+                            action:
+                              type: Retry
+                              spec:
+                                retryCount: 1
+                                retryIntervals:
+                                  - 15s
+                                onRetryFailure:
+                                  action:
+                                    type: MarkAsSuccess
+                  - step:
+                      type: Run
+                      name: Resolve Workflow Plan
+                      identifier: resolve_plan
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          node scripts/ci/resolve-plan.mjs
+                          set -a; . "$AGENT_DIR/change/plan.env"; set +a
+                          if [ -f "$AGENT_DIR/output/workflow-plan.md" ]; then
+                            echo "----- Workflow Router report -----"
+                            cat "$AGENT_DIR/output/workflow-plan.md"
+                          fi
+                        envVariables:
+                          BASELINE_RUN_E2E: <+execution.steps.collect_change_context.output.outputVariables.BASELINE_RUN_E2E>
+                          BASELINE_RUN_DOCKERFILE_REVIEW: <+execution.steps.collect_change_context.output.outputVariables.BASELINE_RUN_DOCKERFILE_REVIEW>
+                          BASELINE_RISK_LEVEL: <+execution.steps.collect_change_context.output.outputVariables.BASELINE_RISK_LEVEL>
+                          BASELINE_CHANGE_CATEGORY: <+execution.steps.collect_change_context.output.outputVariables.BASELINE_CHANGE_CATEGORY>
+                          AGENT_RUN_E2E: <+execution.steps.route_workflow.steps.ca_workflow_router_1.output.outputVariables.RUN_E2E>
+                          AGENT_RUN_DOCKERFILE_REVIEW: <+execution.steps.route_workflow.steps.ca_workflow_router_1.output.outputVariables.RUN_DOCKERFILE_REVIEW>
+                          AGENT_RISK_LEVEL: <+execution.steps.route_workflow.steps.ca_workflow_router_1.output.outputVariables.RISK_LEVEL>
+                          AGENT_CHANGE_CATEGORY: <+execution.steps.route_workflow.steps.ca_workflow_router_1.output.outputVariables.CHANGE_CATEGORY>
+                          AGENT_RATIONALE: <+execution.steps.route_workflow.steps.ca_workflow_router_1.output.outputVariables.RATIONALE>
+                        outputVariables:
+                          - name: RUN_E2E
+                          - name: RUN_DOCKERFILE_REVIEW
+                          - name: RISK_LEVEL
+                          - name: CHANGE_CATEGORY
+                          - name: PLAN_SOURCE
+                      when:
+                        stageStatus: All
+                      timeout: 5m
             variables:
-              - name: force_all
+              - name: AGENT_DIR
                 type: String
-                value: "false"
-              - name: outdated_test_policy
+                value: /harness/.agent
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
+                    spec:
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+        - stage:
+            name: AI Code Review
+            identifier: ai_code_review
+            description: Harness-managed Code Review agent on pull request builds. Advisory; it does not gate the build.
+            type: CI
+            when:
+              pipelineStatus: Success
+              condition: <+codebase.build.type> == "PR"
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: false
+              buildIntelligence:
+                enabled: false
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - step:
+                      type: Agent
+                      name: Code Review - AI
+                      identifier: code_review
+                      spec:
+                        agentName: aiCodeReviewAgent
+                        agentSettings:
+                          model_name: ""
+                          max_turns: "150"
+                          verify_max_turns: "150"
+                      timeout: 20m
+                      failureStrategies:
+                        - onFailure:
+                            errors:
+                              - AllErrors
+                            action:
+                              type: Retry
+                              spec:
+                                retryCount: 1
+                                retryIntervals:
+                                  - 15s
+                                onRetryFailure:
+                                  action:
+                                    type: MarkAsSuccess
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+        - stage:
+            name: Go CI - telemetry-ingest
+            identifier: go_ci
+            description: Lint, split unit tests, build, smoke test, push and scan the Go service.
+            type: CI
+            when:
+              pipelineStatus: Success
+              condition: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.GO_CHANGED> == "true"
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: true
+                key: go-telemetry-ingest-{{ checksum "services/telemetry-ingest/go.mod" }}
+                paths:
+                  - /harness/.cache/go
+                  - /harness/.cache/go-build
+                  - /harness/.cache/golangci-lint
+              buildIntelligence:
+                enabled: false
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - step:
+                      type: Run
+                      name: Download Modules
+                      identifier: go_deps
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: golang:1.24
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          cd "$SERVICE_DIR"
+                          go mod download
+                          go install gotest.tools/gotestsum@v1.12.3
+                      timeout: 10m
+                  - parallel:
+                      - step:
+                          type: Run
+                          name: Lint - golangci-lint
+                          identifier: go_lint
+                          spec:
+                            connectorRef: ffdockerconnector
+                            image: golangci/golangci-lint:v1.64.8
+                            shell: Bash
+                            command: |-
+                              set -euo pipefail
+                              cd "$SERVICE_DIR"
+                              golangci-lint run ./...
+                          timeout: 10m
+                      - step:
+                          type: Run
+                          name: Go Vet
+                          identifier: go_vet
+                          spec:
+                            connectorRef: ffdockerconnector
+                            image: golang:1.24
+                            shell: Bash
+                            command: |-
+                              set -euo pipefail
+                              cd "$SERVICE_DIR"
+                              go vet ./...
+                          timeout: 10m
+                  - step:
+                      type: Run
+                      name: Unit Tests - Split
+                      identifier: go_unit_tests
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: golang:1.24
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          cd "$SERVICE_DIR"
+                          INDEX="${HARNESS_NODE_INDEX:-0}"
+                          TOTAL="${HARNESS_NODE_TOTAL:-1}"
+                          # Each parallel node takes every TOTAL-th package that has tests.
+                          PKGS=$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... \
+                            | awk -v i="$INDEX" -v n="$TOTAL" 'NF && (c++ % n) == i')
+                          mkdir -p /harness/reports/go
+                          if [ -z "$PKGS" ]; then
+                            echo "No test packages assigned to node $INDEX of $TOTAL"
+                          else
+                            echo "Node $INDEX/$TOTAL testing:"; echo "$PKGS"
+                            "$GOPATH/bin/gotestsum" --format testname \
+                              --junitfile "/harness/reports/go/junit-$INDEX.xml" \
+                              -- -race -count=1 -coverprofile="/harness/reports/go/coverage-$INDEX.out" $PKGS
+                          fi
+                        reports:
+                          type: JUnit
+                          spec:
+                            paths:
+                              - /harness/reports/go/junit-*.xml
+                      strategy:
+                        parallelism: 2
+                      timeout: 15m
+                  - step:
+                      type: Run
+                      name: Build Binary
+                      identifier: go_build
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: golang:1.24
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          cd "$SERVICE_DIR"
+                          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+                            -ldflags "-s -w -X main.version=$IMAGE_TAG" \
+                            -o bin/telemetry-ingest ./cmd/telemetry-ingest
+                          ls -lh bin/
+                        envVariables:
+                          IMAGE_TAG: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                      timeout: 10m
+                  - step:
+                      type: Background
+                      name: Start telemetry-ingest
+                      identifier: go_service
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: golang:1.24
+                        shell: Sh
+                        command: ./services/telemetry-ingest/bin/telemetry-ingest
+                        envVariables:
+                          PORT: "8080"
+                  - step:
+                      type: Run
+                      name: Smoke Test
+                      identifier: go_smoke_test
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: curlimages/curl:8.10.1
+                        shell: Sh
+                        command: |-
+                          set -eu
+                          BASE=http://go_service:8080
+                          for i in $(seq 1 30); do curl -fsS "$BASE/healthz" && break; sleep 1; done
+                          curl -fsS "$BASE/healthz"
+                          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/v1/readings" \
+                            -H 'Content-Type: application/json' \
+                            -d '{"vehicleId":"SMOKE-1","timestamp":"2020-01-01T00:00:00Z","speedKph":80,"batteryPercent":50,"batteryTempC":30,"tirePressureKpa":[230,230,230,230]}')
+                          echo "POST /v1/readings -> $STATUS"
+                          [ "$STATUS" = "202" ]
+                          curl -fsS "$BASE/v1/vehicles/SMOKE-1/stats"
+                      timeout: 5m
+                  - step:
+                      type: BuildAndPushDockerRegistry
+                      name: Build and Push to HAR
+                      identifier: go_build_push
+                      spec:
+                        registryRef: <+pipeline.variables.har_registry>
+                        repo: telemetry-ingest
+                        tags:
+                          - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          - latest
+                        context: services/telemetry-ingest
+                        dockerfile: services/telemetry-ingest/Dockerfile
+                        labels:
+                          org.opencontainers.image.revision: <+codebase.commitSha>
+                          org.opencontainers.image.source: <+codebase.repoUrl>
+                        caching: true
+                      timeout: 15m
+                  - step:
+                      type: AquaTrivy
+                      name: Container Scan - Trivy
+                      identifier: go_image_scan
+                      spec:
+                        mode: orchestration
+                        config: default
+                        target:
+                          type: container
+                          detection: auto
+                        advanced:
+                          log:
+                            level: info
+                          fail_on_severity: none
+                        privileged: true
+                        image:
+                          type: harness
+                          tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          registry: aumovio-snapshot
+                          image_path: telemetry-ingest
+                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/telemetry-ingest
+                          domain: pkg.harness.io
+                        sbom:
+                          format: spdx-json
+                      timeout: 15m
+            variables:
+              - name: SERVICE_DIR
                 type: String
-                value: <+pipeline.variables.outdated_test_policy>
-          outputs:
-            - name: EXECUTION_ID
-              value: <+pipeline.executionId>
+                value: services/telemetry-ingest
+              - name: GOPATH
+                type: String
+                value: /harness/.cache/go
+              - name: GOCACHE
+                type: String
+                value: /harness/.cache/go-build
+              - name: GOLANGCI_LINT_CACHE
+                type: String
+                value: /harness/.cache/golangci-lint
+              - name: GOFLAGS
+                type: String
+                value: "-buildvcs=false"
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
+                    spec:
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+        - stage:
+            name: Java CI - fleet-service
+            identifier: java_ci
+            description: Test Intelligence tests, Build Intelligence package, smoke test, push and scan.
+            type: CI
+            when:
+              pipelineStatus: Success
+              condition: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.JAVA_CHANGED> == "true"
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: true
+                key: maven-fleet-service-{{ checksum "services/fleet-service/pom.xml" }}
+                paths:
+                  - /harness/.m2/repository
+              buildIntelligence:
+                enabled: true
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - step:
+                      type: Test
+                      name: Unit Tests - Test Intelligence
+                      identifier: java_tests_ti
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: maven:3.9.9-eclipse-temurin-17
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          mvn test -pl "$SERVICE_DIR" -amd -Dmaven.build.cache.enabled=false -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false
+                        intelligenceMode: true
+                        reports:
+                          type: JUnit
+                          spec:
+                            paths:
+                              - /harness/<+stage.variables.SERVICE_DIR>/**/target/surefire-reports/TEST-*.xml
+                      timeout: 20m
+                  - step:
+                      type: Run
+                      name: Package - Build Intelligence
+                      identifier: java_package
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: maven:3.9.9-eclipse-temurin-17
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          mvn package -pl "$SERVICE_DIR" -amd -DskipTests -Dmaven.build.cache.configPath=/harness/.mvn/maven-build-cache-config.xml
+                          ls -lh "$SERVICE_DIR"/fleet-api/target/*.jar
+                      timeout: 15m
+                  - step:
+                      type: Background
+                      name: Start fleet-api
+                      identifier: java_service
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: eclipse-temurin:17-jre
+                        shell: Sh
+                        command: java -jar services/fleet-service/fleet-api/target/fleet-api.jar
+                        envVariables:
+                          PORT: "8081"
+                          APP_VERSION: smoke
+                  - step:
+                      type: Run
+                      name: Smoke Test
+                      identifier: java_smoke_test
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: curlimages/curl:8.10.1
+                        shell: Sh
+                        command: |-
+                          set -eu
+                          BASE=http://java_service:8081
+                          for i in $(seq 1 60); do curl -fsS "$BASE/healthz" && break; sleep 1; done
+                          curl -fsS "$BASE/healthz"
+                          curl -fsS "$BASE/v1/fleet/report"
+                          curl -fsS "$BASE/v1/vehicles" > /dev/null
+                      timeout: 5m
+                  - step:
+                      type: BuildAndPushDockerRegistry
+                      name: Build and Push to HAR
+                      identifier: java_build_push
+                      spec:
+                        registryRef: <+pipeline.variables.har_registry>
+                        repo: fleet-service
+                        tags:
+                          - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          - latest
+                        context: services/fleet-service
+                        dockerfile: services/fleet-service/Dockerfile
+                        labels:
+                          org.opencontainers.image.revision: <+codebase.commitSha>
+                          org.opencontainers.image.source: <+codebase.repoUrl>
+                        caching: true
+                      timeout: 15m
+                  - step:
+                      type: AquaTrivy
+                      name: Container Scan - Trivy
+                      identifier: java_image_scan
+                      spec:
+                        mode: orchestration
+                        config: default
+                        target:
+                          type: container
+                          detection: auto
+                        advanced:
+                          log:
+                            level: info
+                          fail_on_severity: none
+                        privileged: true
+                        image:
+                          type: harness
+                          tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          registry: aumovio-snapshot
+                          image_path: fleet-service
+                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/fleet-service
+                          domain: pkg.harness.io
+                        sbom:
+                          format: spdx-json
+                      timeout: 15m
+            variables:
+              - name: SERVICE_DIR
+                type: String
+                value: services/fleet-service
+              - name: MAVEN_ARGS
+                type: String
+                value: "-B -ntp -Dmaven.repo.local=/harness/.m2/repository"
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
+                    spec:
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+        - stage:
+            name: Node CI - dashboard-api
+            identifier: node_ci
+            description: Lint, Jest with Test Intelligence, smoke test, push and scan.
+            type: CI
+            when:
+              pipelineStatus: Success
+              condition: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.NODE_CHANGED> == "true"
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: true
+                key: npm-dashboard-api-{{ checksum "services/dashboard-api/package-lock.json" }}
+                paths:
+                  - /harness/.npm
+              buildIntelligence:
+                enabled: false
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - step:
+                      type: Run
+                      name: Install Dependencies
+                      identifier: node_install
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          cd "$SERVICE_DIR"
+                          npm ci --no-audit --no-fund
+                      timeout: 10m
+                  - parallel:
+                      - step:
+                          type: Run
+                          name: Lint - ESLint
+                          identifier: node_lint
+                          spec:
+                            connectorRef: ffdockerconnector
+                            image: node:20
+                            shell: Bash
+                            command: |-
+                              set -euo pipefail
+                              cd "$SERVICE_DIR"
+                              npm run lint
+                          timeout: 10m
+                      - step:
+                          type: Test
+                          name: Unit Tests - Jest with Test Intelligence
+                          identifier: node_tests_ti
+                          spec:
+                            connectorRef: ffdockerconnector
+                            image: node:20
+                            shell: Bash
+                            command: |-
+                              set -euo pipefail
+                              cd "$SERVICE_DIR"
+                              npx jest --ci
+                            envVariables:
+                              HARNESS_TI_QA_ENV: QA_ENV_ENABLED
+                            intelligenceMode: true
+                            reports:
+                              type: JUnit
+                              spec:
+                                paths:
+                                  - /harness/<+stage.variables.SERVICE_DIR>/reports/junit.xml
+                          timeout: 15m
+                  - step:
+                      type: Background
+                      name: Start dashboard-api
+                      identifier: node_service
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Sh
+                        command: node services/dashboard-api/src/server.js
+                        envVariables:
+                          PORT: "3000"
+                          APP_VERSION: smoke
+                  - step:
+                      type: Run
+                      name: Smoke Test
+                      identifier: node_smoke_test
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: curlimages/curl:8.10.1
+                        shell: Sh
+                        command: |-
+                          set -eu
+                          BASE=http://node_service:3000
+                          for i in $(seq 1 30); do curl -fsS "$BASE/healthz" && break; sleep 1; done
+                          curl -fsS "$BASE/healthz"
+                          curl -fsS "$BASE/v1/fleet/summary" > /dev/null
+                          curl -fsS "$BASE/v1/vehicles/VIN-1001?units=imperial"
+                      timeout: 5m
+                  - step:
+                      type: BuildAndPushDockerRegistry
+                      name: Build and Push to HAR
+                      identifier: node_build_push
+                      spec:
+                        registryRef: <+pipeline.variables.har_registry>
+                        repo: dashboard-api
+                        tags:
+                          - <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          - latest
+                        context: services/dashboard-api
+                        dockerfile: services/dashboard-api/Dockerfile
+                        labels:
+                          org.opencontainers.image.revision: <+codebase.commitSha>
+                          org.opencontainers.image.source: <+codebase.repoUrl>
+                        caching: true
+                      timeout: 15m
+                  - step:
+                      type: AquaTrivy
+                      name: Container Scan - Trivy
+                      identifier: node_image_scan
+                      spec:
+                        mode: orchestration
+                        config: default
+                        target:
+                          type: container
+                          detection: auto
+                        advanced:
+                          log:
+                            level: info
+                          fail_on_severity: none
+                        privileged: true
+                        image:
+                          type: harness
+                          tag: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.IMAGE_TAG>
+                          registry: aumovio-snapshot
+                          image_path: dashboard-api
+                          name: <+pipeline.stages.detect_changes.spec.execution.steps.detect_changes.output.outputVariables.HAR_REPO_PATH>/dashboard-api
+                          domain: pkg.harness.io
+                        sbom:
+                          format: spdx-json
+                      timeout: 15m
+            variables:
+              - name: SERVICE_DIR
+                type: String
+                value: services/dashboard-api
+              - name: npm_config_cache
+                type: String
+                value: /harness/.npm
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
+                    spec:
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+    - parallel:
+        - stage:
+            name: E2E Tests and AI Triage
+            identifier: e2e_tests
+            description: Runs all three services together, executes the cross-service E2E suite with flaky-test retry, has the triage agent classify failures, and gates the build fail-closed.
+            type: CI
+            when:
+              pipelineStatus: Success
+              condition: <+pipeline.stages.change_intelligence.spec.execution.steps.resolve_plan.output.outputVariables.RUN_E2E> == "true"
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: true
+                key: e2e-{{ checksum "services/telemetry-ingest/go.mod" }}-{{ checksum "services/fleet-service/pom.xml" }}
+                paths:
+                  - /harness/.cache/go
+                  - /harness/.cache/go-build
+                  - /harness/.m2/repository
+              buildIntelligence:
+                enabled: true
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - parallel:
+                      - step:
+                          type: Run
+                          name: Build telemetry-ingest
+                          identifier: build_telemetry_ingest
+                          spec:
+                            connectorRef: ffdockerconnector
+                            image: golang:1.24
+                            shell: Bash
+                            command: |-
+                              set -euo pipefail
+                              cd services/telemetry-ingest
+                              CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=e2e-<+codebase.shortCommitSha>" \
+                                -o bin/telemetry-ingest ./cmd/telemetry-ingest
+                          timeout: 10m
+                      - step:
+                          type: Run
+                          name: Build fleet-service
+                          identifier: build_fleet_service
+                          spec:
+                            connectorRef: ffdockerconnector
+                            image: maven:3.9.9-eclipse-temurin-17
+                            shell: Bash
+                            command: |-
+                              set -euo pipefail
+                              mvn package -pl services/fleet-service -amd -DskipTests -Dmaven.build.cache.configPath=/harness/.mvn/maven-build-cache-config.xml
+                          timeout: 15m
+                  - step:
+                      type: Background
+                      name: Start telemetry-ingest
+                      identifier: e2e_telemetry
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: golang:1.24
+                        shell: Sh
+                        command: |-
+                          mkdir -p /harness/.agent/logs
+                          ./services/telemetry-ingest/bin/telemetry-ingest 2>&1 | tee /harness/.agent/logs/telemetry-ingest.log
+                        envVariables:
+                          PORT: "8080"
+                  - step:
+                      type: Background
+                      name: Start fleet-service
+                      identifier: e2e_fleet
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: eclipse-temurin:17-jre
+                        shell: Sh
+                        command: |-
+                          mkdir -p /harness/.agent/logs
+                          java -jar services/fleet-service/fleet-api/target/fleet-api.jar 2>&1 | tee /harness/.agent/logs/fleet-service.log
+                        envVariables:
+                          PORT: "8081"
+                          APP_VERSION: e2e
+                  - step:
+                      type: Background
+                      name: Start dashboard-api
+                      identifier: e2e_dashboard
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Sh
+                        command: |-
+                          mkdir -p /harness/.agent/logs
+                          node services/dashboard-api/src/server.js 2>&1 | tee /harness/.agent/logs/dashboard-api.log
+                        envVariables:
+                          PORT: "3000"
+                          APP_VERSION: e2e
+                  - step:
+                      type: Run
+                      name: Run E2E Suite
+                      identifier: run_e2e
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          node tests/e2e/run.mjs
+                          set -a; . "$E2E_REPORT_DIR/outputs.env"; set +a
+                        envVariables:
+                          TELEMETRY_URL: http://e2e_telemetry:8080
+                          FLEET_URL: http://e2e_fleet:8081
+                          DASHBOARD_URL: http://e2e_dashboard:3000
+                        outputVariables:
+                          - name: E2E_STATUS
+                          - name: E2E_TOTAL
+                          - name: E2E_FAILED
+                          - name: E2E_FLAKY
+                          - name: E2E_NEEDS_TRIAGE
+                        reports:
+                          type: JUnit
+                          spec:
+                            paths:
+                              - /harness/tests/e2e/reports/junit-*.xml
+                      timeout: 15m
+                  - step:
+                      type: Run
+                      name: Collect Failure Evidence
+                      identifier: collect_e2e_evidence
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          node scripts/ci/change-context.mjs > /dev/null
+                          node scripts/ci/collect-e2e-evidence.mjs
+                        envVariables:
+                          BUILD_TYPE: <+codebase.build.type>
+                          BASE_SHA: <+codebase.baseCommitSha>
+                          PR_NUMBER: <+codebase.prNumber>
+                          BRANCH: <+codebase.branch>
+                          FORCE_ALL: <+pipeline.variables.force_all>
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.run_e2e.output.outputVariables.E2E_NEEDS_TRIAGE> == "true"
+                      timeout: 5m
+                  - step:
+                      type: Agent
+                      name: Triage E2E Failures - AI
+                      identifier: triage_e2e_failures
+                      spec:
+                        agentName: ca_e2e_failure_triage_agent
+                        agentSettings:
+                          changeContextPath: /harness/.agent/change/context.md
+                          diffPath: /harness/.agent/change/diff.patch
+                          evidenceJsonPath: /harness/.agent/e2e/evidence.json
+                          evidencePath: /harness/.agent/e2e/evidence.md
+                          outputDir: /harness/.agent/output
+                          repository: prameetu20codes/aumovio-ci-demo
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.run_e2e.output.outputVariables.E2E_NEEDS_TRIAGE> == "true"
+                      timeout: 20m
+                      failureStrategies:
+                        - onFailure:
+                            errors:
+                              - AllErrors
+                            action:
+                              type: Retry
+                              spec:
+                                retryCount: 1
+                                retryIntervals:
+                                  - 15s
+                                onRetryFailure:
+                                  action:
+                                    type: MarkAsSuccess
+                  - step:
+                      type: Run
+                      name: E2E Quality Gate
+                      identifier: e2e_quality_gate
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          set -uo pipefail
+                          if [ -f "$AGENT_DIR/output/e2e-triage.md" ]; then
+                            echo "----- E2E Failure Triage report -----"
+                            cat "$AGENT_DIR/output/e2e-triage.md"
+                            echo "-------------------------------------"
+                          fi
+                          node scripts/ci/e2e-gate.mjs
+                        envVariables:
+                          E2E_STATUS: <+execution.steps.run_e2e.output.outputVariables.E2E_STATUS>
+                          E2E_FAILED: <+execution.steps.run_e2e.output.outputVariables.E2E_FAILED>
+                          E2E_FLAKY: <+execution.steps.run_e2e.output.outputVariables.E2E_FLAKY>
+                          VERDICT: <+execution.steps.triage_e2e_failures.steps.ca_e2e_failure_triage_agent_1.output.outputVariables.VERDICT>
+                          CONFIDENCE: <+execution.steps.triage_e2e_failures.steps.ca_e2e_failure_triage_agent_1.output.outputVariables.CONFIDENCE>
+                          SUMMARY: <+execution.steps.triage_e2e_failures.steps.ca_e2e_failure_triage_agent_1.output.outputVariables.SUMMARY>
+                          CONFIDENCE_THRESHOLD: <+pipeline.variables.triage_confidence_threshold>
+                          OUTDATED_TEST_POLICY: <+pipeline.variables.outdated_test_policy>
+                      when:
+                        stageStatus: All
+                      timeout: 5m
+            variables:
+              - name: AGENT_DIR
+                type: String
+                value: /harness/.agent
+              - name: E2E_REPORT_DIR
+                type: String
+                value: /harness/tests/e2e/reports
+              - name: GOPATH
+                type: String
+                value: /harness/.cache/go
+              - name: GOCACHE
+                type: String
+                value: /harness/.cache/go-build
+              - name: GOFLAGS
+                type: String
+                value: "-buildvcs=false"
+              - name: MAVEN_ARGS
+                type: String
+                value: "-B -ntp -Dmaven.repo.local=/harness/.m2/repository"
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
+                    spec:
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+        - stage:
+            name: Dockerfile and Build-Cache Review
+            identifier: dockerfile_review
+            description: hadolint plus the Dockerfile Optimizer agent. hadolint errors and agent-reported blocking findings fail the build; recommendations are reported.
+            type: CI
+            when:
+              pipelineStatus: Success
+              condition: <+pipeline.stages.change_intelligence.spec.execution.steps.resolve_plan.output.outputVariables.RUN_DOCKERFILE_REVIEW> == "true"
+            spec:
+              cloneCodebase: true
+              caching:
+                enabled: false
+              buildIntelligence:
+                enabled: false
+              platform:
+                os: Linux
+                arch: Amd64
+              runtime:
+                type: Cloud
+                spec: {}
+              execution:
+                steps:
+                  - step:
+                      type: Run
+                      name: Lint Dockerfiles - hadolint
+                      identifier: hadolint
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: hadolint/hadolint:v2.12.0-debian
+                        shell: Sh
+                        command: |-
+                          set -eu
+                          mkdir -p "$AGENT_DIR/dockerfile"
+                          hadolint --no-fail --format json services/*/Dockerfile > "$AGENT_DIR/dockerfile/hadolint.json"
+                          hadolint --no-fail services/*/Dockerfile
+                      timeout: 5m
+                  - step:
+                      type: Run
+                      name: Collect Dockerfile Context
+                      identifier: dockerfile_context
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          set -euo pipefail
+                          node scripts/ci/dockerfile-context.mjs
+                          set -a; . "$AGENT_DIR/dockerfile/hadolint.env"; set +a
+                        outputVariables:
+                          - name: HADOLINT_ERRORS
+                          - name: HADOLINT_WARNINGS
+                      timeout: 5m
+                  - step:
+                      type: Agent
+                      name: Optimize Dockerfiles - AI
+                      identifier: optimize_dockerfiles
+                      spec:
+                        agentName: ca_dockerfile_optimizer_agent
+                        agentSettings:
+                          contextPath: /harness/.agent/dockerfile/context.md
+                          outputDir: /harness/.agent/output
+                          repository: prameetu20codes/aumovio-ci-demo
+                      timeout: 20m
+                      failureStrategies:
+                        - onFailure:
+                            errors:
+                              - AllErrors
+                            action:
+                              type: Retry
+                              spec:
+                                retryCount: 1
+                                retryIntervals:
+                                  - 15s
+                                onRetryFailure:
+                                  action:
+                                    type: MarkAsSuccess
+                  - step:
+                      type: Run
+                      name: Dockerfile Quality Gate
+                      identifier: dockerfile_gate
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          set -uo pipefail
+                          if [ -f "$AGENT_DIR/output/dockerfile-review.md" ]; then
+                            echo "----- Dockerfile Optimizer report -----"
+                            cat "$AGENT_DIR/output/dockerfile-review.md"
+                            echo "---------------------------------------"
+                          fi
+                          node scripts/ci/dockerfile-gate.mjs
+                        envVariables:
+                          HADOLINT_ERRORS: <+execution.steps.dockerfile_context.output.outputVariables.HADOLINT_ERRORS>
+                          HADOLINT_WARNINGS: <+execution.steps.dockerfile_context.output.outputVariables.HADOLINT_WARNINGS>
+                          BLOCKING_FINDINGS: <+execution.steps.optimize_dockerfiles.steps.ca_dockerfile_optimizer_agent_1.output.outputVariables.BLOCKING_FINDINGS>
+                          TOTAL_FINDINGS: <+execution.steps.optimize_dockerfiles.steps.ca_dockerfile_optimizer_agent_1.output.outputVariables.TOTAL_FINDINGS>
+                          SUMMARY: <+execution.steps.optimize_dockerfiles.steps.ca_dockerfile_optimizer_agent_1.output.outputVariables.SUMMARY>
+                      when:
+                        stageStatus: All
+                      timeout: 5m
+            variables:
+              - name: AGENT_DIR
+                type: String
+                value: /harness/.agent
+            failureStrategies:
+              - onFailure:
+                  errors:
+                    - Connectivity
+                    - Timeout
+                  action:
+                    type: Retry
+                    spec:
+                      retryCount: 2
+                      retryIntervals:
+                        - 10s
+                      onRetryFailure:
+                        action:
+                          type: MarkAsFailure
+              - onFailure:
+                  errors:
+                    - AllErrors
+                  action:
+                    type: MarkAsFailure
+    - stage:
+        name: CI Failure Triage
+        identifier: ci_failure_triage
+        description: Runs only when an earlier stage failed. Collects the failed stages and steps, reproduces failing unit tests, and lets the CI Failure Triage agent diagnose the root cause and propose a patch. Diagnostic only; it never changes code.
+        type: CI
         when:
-          pipelineStatus: Success
-          condition: <+pipeline.variables.run_ci> == "true"
+          pipelineStatus: Failure
+        spec:
+          cloneCodebase: true
+          caching:
+            enabled: false
+          buildIntelligence:
+            enabled: false
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Collect Failure Context
+                  identifier: collect_failure_context
+                  spec:
+                    connectorRef: ffdockerconnector
+                    image: node:20
+                    shell: Bash
+                    command: |-
+                      set -euo pipefail
+                      node scripts/ci/change-context.mjs > /dev/null
+                      node scripts/ci/failure-context.mjs
+                      set -a; . "$AGENT_DIR/failure/repro.env"; set +a
+                    envVariables:
+                      BUILD_TYPE: <+codebase.build.type>
+                      BASE_SHA: <+codebase.baseCommitSha>
+                      PR_NUMBER: <+codebase.prNumber>
+                      BRANCH: <+codebase.branch>
+                      FORCE_ALL: <+pipeline.variables.force_all>
+                      ACCOUNT_ID: <+account.identifier>
+                      ORG_ID: <+org.identifier>
+                      PROJECT_ID: <+project.identifier>
+                      EXECUTION_ID: <+pipeline.executionId>
+                    outputVariables:
+                      - name: REPRO_GO
+                      - name: REPRO_JAVA
+                      - name: REPRO_NODE
+                  timeout: 5m
+              - parallel:
+                  - step:
+                      type: Run
+                      name: Reproduce Go Unit Tests
+                      identifier: repro_go_tests
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: golang:1.24
+                        shell: Bash
+                        command: |-
+                          cd services/telemetry-ingest
+                          (go test ./... 2>&1 || true) | tail -n 300 > "$AGENT_DIR/failure/go-tests.log"
+                          cat "$AGENT_DIR/failure/go-tests.log"
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.collect_failure_context.output.outputVariables.REPRO_GO> == "true"
+                      timeout: 10m
+                  - step:
+                      type: Run
+                      name: Reproduce Java Unit Tests
+                      identifier: repro_java_tests
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: maven:3.9.9-eclipse-temurin-17
+                        shell: Bash
+                        command: |-
+                          (mvn -B -ntp -f services/fleet-service/pom.xml -Dmaven.build.cache.enabled=false test 2>&1 || true) \
+                            | grep -v -E '^\[INFO\] (Download|Progress)' | tail -n 300 > "$AGENT_DIR/failure/java-tests.log"
+                          cat "$AGENT_DIR/failure/java-tests.log"
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.collect_failure_context.output.outputVariables.REPRO_JAVA> == "true"
+                      timeout: 15m
+                  - step:
+                      type: Run
+                      name: Reproduce Node Unit Tests
+                      identifier: repro_node_tests
+                      spec:
+                        connectorRef: ffdockerconnector
+                        image: node:20
+                        shell: Bash
+                        command: |-
+                          cd services/dashboard-api
+                          npm ci --ignore-scripts --no-audit --no-fund > /dev/null 2>&1 || true
+                          (npx jest --ci 2>&1 || true) | tail -n 300 > "$AGENT_DIR/failure/node-tests.log"
+                          cat "$AGENT_DIR/failure/node-tests.log"
+                      when:
+                        stageStatus: Success
+                        condition: <+execution.steps.collect_failure_context.output.outputVariables.REPRO_NODE> == "true"
+                      timeout: 10m
+              - step:
+                  type: Agent
+                  name: Triage CI Failure - AI
+                  identifier: triage_ci_failure
+                  spec:
+                    agentName: ca_ci_failure_triage
+                    agentSettings:
+                      changeContextPath: /harness/.agent/change/context.md
+                      diffPath: /harness/.agent/change/diff.patch
+                      failureDir: /harness/.agent/failure
+                      failuresPath: /harness/.agent/failure/failures.md
+                      outputDir: /harness/.agent/output
+                      repository: prameetu20codes/aumovio-ci-demo
+                  timeout: 25m
+                  failureStrategies:
+                    - onFailure:
+                        errors:
+                          - AllErrors
+                        action:
+                          type: Retry
+                          spec:
+                            retryCount: 1
+                            retryIntervals:
+                              - 15s
+                            onRetryFailure:
+                              action:
+                                type: MarkAsSuccess
+              - step:
+                  type: Run
+                  name: Publish Triage Report
+                  identifier: publish_triage_report
+                  spec:
+                    connectorRef: ffdockerconnector
+                    image: node:20
+                    shell: Bash
+                    command: |-
+                      set -uo pipefail
+                      echo "Category:   ${FAILURE_CATEGORY}"
+                      echo "Confidence: ${CONFIDENCE}"
+                      echo "Root cause: ${ROOT_CAUSE}"
+                      echo "Files:      ${SUSPECT_FILES}"
+                      echo
+                      if [ -f "$AGENT_DIR/output/ci-triage.md" ]; then
+                        cat "$AGENT_DIR/output/ci-triage.md"
+                      else
+                        echo "The triage agent produced no report; see $AGENT_DIR/failure/failures.md:"
+                        cat "$AGENT_DIR/failure/failures.md" 2>/dev/null || true
+                      fi
+                      if [ -s "$AGENT_DIR/output/ci-fix.patch" ]; then
+                        echo
+                        echo "----- Proposed fix (apply with: git apply ci-fix.patch) -----"
+                        cat "$AGENT_DIR/output/ci-fix.patch"
+                      fi
+                    envVariables:
+                      FAILURE_CATEGORY: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.FAILURE_CATEGORY>
+                      CONFIDENCE: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.CONFIDENCE>
+                      ROOT_CAUSE: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.ROOT_CAUSE>
+                      SUSPECT_FILES: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.SUSPECT_FILES>
+                  when:
+                    stageStatus: All
+                  timeout: 5m
+        variables:
+          - name: AGENT_DIR
+            type: String
+            value: /harness/.agent
+          - name: GOFLAGS
+            type: String
+            value: "-buildvcs=false"
         failureStrategies:
           - onFailure:
               errors:
@@ -86,7 +1472,7 @@ pipeline:
     - stage:
         name: Learn and Remediate
         identifier: learn_and_remediate
-        description: Runs whether the CI run passed or failed. Knowledge Graph analysis, remediation plan, fix verification and the learning record.
+        description: Runs after every CI stage of this execution, whether they passed or failed (or alone, as a history-only trend run). Knowledge Graph analysis, remediation plan, fix verification and the learning record.
         type: CI
         when:
           pipelineStatus: All
@@ -121,13 +1507,18 @@ pipeline:
                       ACCOUNT_ID: <+account.identifier>
                       ORG_ID: <+org.identifier>
                       PROJECT_ID: <+project.identifier>
-                      CI_PIPELINE_ID: aumovio_monorepo_ci_agentic
+                      CI_PIPELINE_IDS: <+pipeline.identifier>,aumovio_monorepo_ci_agentic
                       LOOP_PIPELINE_ID: <+pipeline.identifier>
-                      LOOP_EXECUTION_ID: <+pipeline.executionId>
-                      CHILD_EXECUTION_ID: <+pipeline.stages.run_agentic_ci.output.EXECUTION_ID>
-                      RUN_CI: <+pipeline.variables.run_ci>
+                      EXECUTION_ID: <+pipeline.executionId>
                       TARGET_BRANCH: <+pipeline.variables.target_branch>
                       COMMIT_SHA: <+codebase.commitSha>
+                      STAGE_STATUSES: detect_changes=<+pipeline.stages.detect_changes.status>,code_security=<+pipeline.stages.code_security.status>,change_intelligence=<+pipeline.stages.change_intelligence.status>,ai_code_review=<+pipeline.stages.ai_code_review.status>,go_ci=<+pipeline.stages.go_ci.status>,java_ci=<+pipeline.stages.java_ci.status>,node_ci=<+pipeline.stages.node_ci.status>,e2e_tests=<+pipeline.stages.e2e_tests.status>,dockerfile_review=<+pipeline.stages.dockerfile_review.status>,ci_failure_triage=<+pipeline.stages.ci_failure_triage.status>
+                      TRIAGE_FAILURE_CATEGORY: <+pipeline.stages.ci_failure_triage.spec.execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.FAILURE_CATEGORY>
+                      TRIAGE_ROOT_CAUSE: <+pipeline.stages.ci_failure_triage.spec.execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.ROOT_CAUSE>
+                      TRIAGE_SUSPECT_FILES: <+pipeline.stages.ci_failure_triage.spec.execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.SUSPECT_FILES>
+                      TRIAGE_CONFIDENCE: <+pipeline.stages.ci_failure_triage.spec.execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.CONFIDENCE>
+                      TRIAGE_FIX_OWNER: <+pipeline.stages.ci_failure_triage.spec.execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.FIX_OWNER>
+                      TRIAGE_SUMMARY: <+pipeline.stages.ci_failure_triage.spec.execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.SUMMARY>
                     outputVariables:
                       - name: HAS_CI_RUN
                       - name: CI_FAILED
@@ -140,11 +1531,12 @@ pipeline:
                   spec:
                     agentName: ca_ci_knowledge_graph_analyst
                     agentSettings:
-                      ciPipelineId: aumovio_monorepo_ci_agentic
-                      lookbackDays: "30"
+                      ciPipelineId: <+pipeline.identifier>
+                      relatedPipelineId: aumovio_monorepo_ci_agentic
+                      targetBranch: <+pipeline.variables.target_branch>
+                      lookbackDays: <+pipeline.variables.lookback_days>
                       loopDir: /harness/.agent/loop
                       outputDir: /harness/.agent/loop/out
-                      targetBranch: main
                   timeout: 20m
                   failureStrategies:
                     - onFailure:
@@ -166,11 +1558,11 @@ pipeline:
                   spec:
                     agentName: ca_ci_remediation
                     agentSettings:
-                      ciPipelineId: aumovio_monorepo_ci_agentic
-                      ciPipelinePath: .harness/orgs/testprameet/projects/testproj/pipelines/aumovio_monorepo_ci_agentic.yaml
+                      ciPipelineId: <+pipeline.identifier>
+                      ciPipelinePath: .harness/orgs/testprameet/projects/testproj/pipelines/aumovio_ci_learning_loop.yaml
                       targetBranch: <+pipeline.variables.target_branch>
-                      kgStatus: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_1.output.outputVariables.KG_STATUS>
-                      kgFailurePattern: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_1.output.outputVariables.FAILURE_PATTERN>
+                      kgStatus: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_analyst_1.output.outputVariables.KG_STATUS>
+                      kgFailurePattern: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_analyst_1.output.outputVariables.FAILURE_PATTERN>
                       loopDir: /harness/.agent/loop
                       outputDir: /harness/.agent/loop/out
                   timeout: 30m
@@ -313,9 +1705,9 @@ pipeline:
                       LOOP_EXECUTION_ID: <+pipeline.executionId>
                       TARGET_BRANCH: <+pipeline.variables.target_branch>
                       COMMIT_SHA: <+codebase.commitSha>
-                      KG_STATUS: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_1.output.outputVariables.KG_STATUS>
-                      KG_FAILURE_PATTERN: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_1.output.outputVariables.FAILURE_PATTERN>
-                      KG_RECURRENCE_COUNT: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_1.output.outputVariables.RECURRENCE_COUNT>
+                      KG_STATUS: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_analyst_1.output.outputVariables.KG_STATUS>
+                      KG_FAILURE_PATTERN: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_analyst_1.output.outputVariables.FAILURE_PATTERN>
+                      KG_RECURRENCE_COUNT: <+execution.steps.kg_insights.steps.ca_ci_knowledge_graph_analyst_1.output.outputVariables.RECURRENCE_COUNT>
                       REM_PATTERN_KEY: <+execution.steps.remediate.steps.ca_ci_remediation_1.output.outputVariables.PATTERN_KEY>
                       REM_REMEDIATION_TYPE: <+execution.steps.remediate.steps.ca_ci_remediation_1.output.outputVariables.REMEDIATION_TYPE>
                       REM_ROOT_CAUSE: <+execution.steps.remediate.steps.ca_ci_remediation_1.output.outputVariables.ROOT_CAUSE>

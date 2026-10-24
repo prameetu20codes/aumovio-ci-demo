@@ -28,7 +28,7 @@ const results = Object.fromEntries(
 );
 
 let fixVerification;
-const ciFailed = run.summary ? run.summary.status !== 'Success' : (run.stages || []).length > 0;
+const ciFailed = run.ciStatus === 'Failed';
 if (verify.CODE_PATCH !== 'present') fixVerification = ciFailed ? 'NO_PATCH' : 'NOT_APPLICABLE';
 else if (verify.CODE_PATCH_APPLIES !== 'true') fixVerification = 'PATCH_DOES_NOT_APPLY';
 else if (!Object.keys(results).length) fixVerification = 'NOT_RUN';
@@ -37,10 +37,10 @@ else fixVerification = Object.values(results).every((r) => r === 'PASS') ? 'VERI
 const record = {
   ts: new Date().toISOString(),
   loopExecutionId: clean(env.LOOP_EXECUTION_ID),
-  ciExecutionId: run.executionId || '',
+  ciExecutionId: run.ciStatus === 'not-run' ? '' : run.executionId || '',
   branch: clean(env.TARGET_BRANCH),
   commit: clean(env.COMMIT_SHA).slice(0, 12),
-  ciStatus: run.summary?.status || (run.executionId ? 'unknown' : 'not-run'),
+  ciStatus: run.ciStatus || 'unknown',
   failedStages: (run.stages || []).map((s) => s.stage).join(','),
   triageCategory: clean(run.triage?.FAILURE_CATEGORY),
   kgStatus: clean(env.KG_STATUS) || 'UNKNOWN',

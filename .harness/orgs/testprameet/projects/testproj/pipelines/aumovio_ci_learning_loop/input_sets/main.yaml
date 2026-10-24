@@ -1,7 +1,7 @@
 inputSet:
   name: main
   identifier: main
-  description: Baseline: main (expected green)
+  description: "Baseline: main (expected green)"
   orgIdentifier: testprameet
   projectIdentifier: testproj
   pipeline:
@@ -10,9 +10,9 @@ inputSet:
       - name: target_branch
         type: String
         value: main
-      - name: run_ci
+      - name: force_all
         type: String
-        value: "true"
+        value: "false"
       - name: outdated_test_policy
         type: String
         value: warn

@@ -1,7 +1,7 @@
 inputSet:
   name: scenario_e2e_outdated_test
   identifier: scenario_e2e_outdated_test
-  description: Scenario branch scenario/e2e-outdated-test
+  description: "Scenario branch scenario/e2e-outdated-test"
   orgIdentifier: testprameet
   projectIdentifier: testproj
   pipeline:
@@ -10,9 +10,9 @@ inputSet:
       - name: target_branch
         type: String
         value: scenario/e2e-outdated-test
-      - name: run_ci
+      - name: force_all
         type: String
-        value: "true"
+        value: "false"
       - name: outdated_test_policy
         type: String
         value: warn

@@ -1,14 +1,18 @@
 #!/usr/bin/env node
-// Builds the evidence for the CI learning loop agents. Runs after the chained CI execution has
-// finished, so nothing here waits on a running execution.
+// Builds the evidence for the CI learning loop agents. Runs in the last stage of the loop
+// execution, after its CI stages; the execution itself is still Running, so nothing here waits
+// for it to end.
 //
 // Inputs (environment):
+//   STAGE_STATUSES      stage=status pairs of this execution's CI stages (Harness expressions;
+//                       unresolved when a stage did not run, e.g. a Learn-and-Remediate-only run)
+//   TRIAGE_*            outputs of the CI Failure Triage agent in this execution, when it ran
 //   HARNESS_TOKEN | HARNESS_API_KEY, HARNESS_BASE_URL, ACCOUNT_ID, ORG_ID, PROJECT_ID
-//   CI_PIPELINE_ID      pipeline whose executions are analysed (aumovio_monorepo_ci_agentic)
+//                       optional; adds failed-step detail, CI history and memory
+//   EXECUTION_ID        this execution
+//   CI_PIPELINE_IDS     comma-separated pipelines whose executions form the CI history
 //   LOOP_PIPELINE_ID    this pipeline; its earlier executions hold the learning records (memory)
-//   LOOP_EXECUTION_ID   this execution, excluded from memory
-//   CHILD_EXECUTION_ID  the CI execution chained by this run (empty when RUN_CI=false)
-//   RUN_CI, TARGET_BRANCH, COMMIT_SHA, HISTORY_SIZE (20), MEMORY_SIZE (10)
+//   TARGET_BRANCH, COMMIT_SHA, HISTORY_SIZE (20), MEMORY_SIZE (10)
 //   PLAYBOOK_PATH       playbook in the repository (default knowledge/ci-playbook.md)
 //   AGENT_DIR           evidence root (default /harness/.agent)
 // Outputs in $AGENT_DIR/loop: run.json/md, history.json/md, memory.json/md, playbook.md,
@@ -25,10 +29,10 @@ const agentDir = env.AGENT_DIR || '/harness/.agent';
 const outDir = join(agentDir, 'loop');
 mkdirSync(join(outDir, 'out'), { recursive: true });
 
-const ciPipeline = env.CI_PIPELINE_ID || 'aumovio_monorepo_ci_agentic';
 const loopPipeline = env.LOOP_PIPELINE_ID || 'aumovio_ci_learning_loop';
+const ciPipelines = (env.CI_PIPELINE_IDS || `${loopPipeline},aumovio_monorepo_ci_agentic`).split(',').map((s) => s.trim()).filter(Boolean);
+const executionId = clean(env.EXECUTION_ID);
 const branch = clean(env.TARGET_BRANCH) || 'main';
-const runCi = clean(env.RUN_CI) !== 'false';
 const historySize = Number(env.HISTORY_SIZE || 20);
 const memorySize = Number(env.MEMORY_SIZE || 10);
 const playbookPath = env.PLAYBOOK_PATH || 'knowledge/ci-playbook.md';
@@ -41,35 +45,57 @@ const table = (rows, cols) =>
     ? [`| ${cols.join(' | ')} |`, `|${cols.map(() => '---').join('|')}|`, ...rows.map((r) => `| ${cols.map((c) => String(r[c] ?? '').replace(/\|/g, '/')).join(' | ')} |`)].join('\n')
     : '_none_';
 
-// 1. The CI execution chained by this run.
-const run = { executionId: clean(env.CHILD_EXECUTION_ID), source: 'none', summary: null, stages: [], steps: [], triage: null };
-if (runCi) {
+// 1. The CI stages of this execution: statuses and triage verdict from expressions, step detail
+//    from the execution API when available.
+const isFailed = (s) => /fail|error|expired|abort|reject/i.test(s);
+const didRun = (s) => s && !/skip|not_?started|queued/i.test(s);
+const stageStatus = Object.fromEntries(
+  (env.STAGE_STATUSES || '')
+    .split(',')
+    .map((pair) => pair.split('='))
+    .filter(([stage]) => stage)
+    .map(([stage, status]) => [stage.trim(), clean(status)]),
+);
+const ran = Object.values(stageStatus).some(didRun);
+const run = {
+  executionId,
+  ciStatus: !ran ? 'not-run' : Object.values(stageStatus).some(isFailed) ? 'Failed' : 'Success',
+  stageStatus,
+  stages: Object.entries(stageStatus).filter(([, s]) => isFailed(s)).map(([stage, status]) => ({ stage, status, message: '' })),
+  steps: [],
+  triage: null,
+  stepSource: 'none',
+};
+const triage = Object.fromEntries(
+  ['FAILURE_CATEGORY', 'ROOT_CAUSE', 'SUSPECT_FILES', 'CONFIDENCE', 'FIX_OWNER', 'SUMMARY']
+    .map((k) => [k, clean(env[`TRIAGE_${k}`])])
+    .filter(([, v]) => v),
+);
+if (Object.keys(triage).length) run.triage = triage;
+if (ran && executionId) {
   try {
-    if (!run.executionId) {
-      const latest = (await listExecutions(ciPipeline, 1, branch))[0];
-      if (latest) {
-        run.executionId = latest.executionId;
-        notes.push(`Chained execution id was not passed; using the latest ${ciPipeline} execution on ${branch}.`);
-      }
-    }
-    if (run.executionId) {
-      const data = await getExecution(run.executionId);
-      Object.assign(run, failuresOf(data), { source: 'execution-api' });
-      run.triage = outputsOf(data, 'ca_ci_failure_triage_1');
-    }
+    const data = await getExecution(executionId);
+    const detail = failuresOf(data);
+    run.steps = detail.steps;
+    for (const s of run.stages) s.message = detail.stages.find((d) => d.stage === s.stage)?.message || '';
+    run.triage ||= outputsOf(data, 'ca_ci_failure_triage_1');
+    run.stepSource = 'execution-api';
   } catch (err) {
-    run.source = 'unavailable';
-    notes.push(`Execution API unavailable for the CI run (${err.message}). Use Harness MCP: harness_get execution ${run.executionId || `(latest ${ciPipeline} on ${branch})`}.`);
+    run.stepSource = 'unavailable';
+    notes.push(`Execution API unavailable (${err.message}); for failed-step messages and logs use Harness MCP on execution ${executionId}.`);
   }
 }
 write('run.json', JSON.stringify(run, null, 2));
 write(
   'run.md',
   [
-    `# CI run analysed by this loop`,
-    runCi ? '' : '_RUN_CI=false: no CI run was chained; this is a history-only (trend) analysis._',
-    `- Pipeline: ${ciPipeline}; execution: ${run.executionId || 'unknown'}; branch: ${branch}; commit: ${clean(env.COMMIT_SHA) || 'unknown'}`,
-    `- Status: ${run.summary?.status || 'unknown'} (source: ${run.source})`,
+    `# CI stages of this execution`,
+    ran ? '' : '_No CI stage ran in this execution: this is a history-only (trend) analysis._',
+    `- Pipeline: ${loopPipeline}; execution: ${executionId || 'unknown'}; branch: ${branch}; commit: ${clean(env.COMMIT_SHA) || 'unknown'}`,
+    `- CI result: ${run.ciStatus}`,
+    '',
+    '## Stage statuses',
+    table(Object.entries(stageStatus).map(([stage, status]) => ({ stage, status: status || 'did not run' })), ['stage', 'status']),
     '',
     '## Failed stages',
     table(run.stages, ['stage', 'status', 'message']),
@@ -82,20 +108,23 @@ write(
   ].join('\n') + '\n',
 );
 
-// 2. Recent history of the CI pipeline (all branches) for quick local correlation.
+// 2. Recent history of the CI pipelines (all branches) for quick local correlation.
 let history = [];
-try {
-  history = await listExecutions(ciPipeline, historySize);
-} catch (err) {
-  notes.push(`Could not list ${ciPipeline} executions (${err.message}); rely on the Knowledge Graph.`);
+for (const id of ciPipelines) {
+  try {
+    history.push(...(await listExecutions(id, historySize)).filter((h) => h.executionId !== executionId).map((h) => ({ pipeline: id, ...h })));
+  } catch (err) {
+    notes.push(`Could not list ${id} executions (${err.message}); rely on the Knowledge Graph.`);
+  }
 }
+history = history.sort((a, b) => b.startTs.localeCompare(a.startTs)).slice(0, historySize);
 write('history.json', JSON.stringify(history, null, 2));
 write(
   'history.md',
-  `# Last ${history.length} executions of ${ciPipeline}\n\n` +
+  `# Last ${history.length} executions of ${ciPipelines.join(', ')}\n\n` +
     table(
       history.map((h) => ({ ...h, failedStages: h.failedStages.join(', ') })),
-      ['runSequence', 'executionId', 'status', 'branch', 'commit', 'startTs', 'durationSec', 'failedStages', 'commitMessage'],
+      ['pipeline', 'runSequence', 'executionId', 'status', 'branch', 'commit', 'startTs', 'durationSec', 'failedStages', 'commitMessage'],
     ) +
     '\n',
 );
@@ -104,7 +133,7 @@ write(
 const memory = [];
 try {
   const previous = (await listExecutions(loopPipeline, memorySize + 1)).filter(
-    (e) => e.executionId !== clean(env.LOOP_EXECUTION_ID) && !['Running', 'Queued', 'NotStarted'].includes(e.status),
+    (e) => e.executionId !== executionId && !['Running', 'Queued', 'NotStarted'].includes(e.status),
   );
   for (const e of previous.slice(0, memorySize)) {
     try {
@@ -150,10 +179,10 @@ try {
 }
 write('diff.patch', diff);
 
-const ciFailed = run.summary ? run.summary.status !== 'Success' : run.stages.length > 0;
+const ciFailed = run.ciStatus === 'Failed';
 write(
   'loop.env',
-  [`HAS_CI_RUN=${Boolean(run.executionId)}`, `CI_FAILED=${ciFailed}`, `CI_EXECUTION_ID=${run.executionId}`, `MEMORY_RECORDS=${memory.length}`].join('\n') + '\n',
+  [`HAS_CI_RUN=${ran}`, `CI_FAILED=${ciFailed}`, `CI_EXECUTION_ID=${ran ? executionId : ''}`, `MEMORY_RECORDS=${memory.length}`].join('\n') + '\n',
 );
 write(
   'context.md',

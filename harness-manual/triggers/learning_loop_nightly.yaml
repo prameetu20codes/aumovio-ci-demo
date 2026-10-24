@@ -2,14 +2,15 @@ trigger:
   name: Learning Loop - Nightly trend analysis
   identifier: learning_loop_nightly
   enabled: true
-  description: Runs the CI learning loop every night without a CI run (run_ci=false). The Knowledge Graph agent analyses the last 30 days of aumovio_monorepo_ci_agentic executions and the Remediation agent proposes pipeline and strategy changes and a playbook update.
+  description: Runs only the Learn and Remediate stage of the CI learning loop every night (selective stage execution, no CI stages). The Knowledge Graph agent analyses the last 30 days of CI executions and the Remediation agent proposes pipeline and strategy changes and a playbook update.
   tags:
     customer: aumovio
     ai: worker-agents
   orgIdentifier: testprameet
   projectIdentifier: testproj
   pipelineIdentifier: aumovio_ci_learning_loop
-  stagesToExecute: []
+  stagesToExecute:
+    - learn_and_remediate
   source:
     type: Scheduled
     spec:
@@ -25,7 +26,7 @@ trigger:
         - name: target_branch
           type: String
           value: main
-        - name: run_ci
+        - name: force_all
           type: String
           value: "false"
         - name: outdated_test_policy

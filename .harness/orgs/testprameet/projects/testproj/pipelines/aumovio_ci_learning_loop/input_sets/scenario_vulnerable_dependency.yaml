@@ -1,7 +1,7 @@
 inputSet:
   name: scenario_vulnerable_dependency
   identifier: scenario_vulnerable_dependency
-  description: Scenario branch scenario/vulnerable-dependency
+  description: "Scenario branch scenario/vulnerable-dependency"
   orgIdentifier: testprameet
   projectIdentifier: testproj
   pipeline:
@@ -10,9 +10,9 @@ inputSet:
       - name: target_branch
         type: String
         value: scenario/vulnerable-dependency
-      - name: run_ci
+      - name: force_all
         type: String
-        value: "true"
+        value: "false"
       - name: outdated_test_policy
         type: String
         value: warn

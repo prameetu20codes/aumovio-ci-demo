@@ -1,7 +1,7 @@
 inputSet:
   name: scenario_sast_injection
   identifier: scenario_sast_injection
-  description: Scenario branch scenario/sast-injection
+  description: "Scenario branch scenario/sast-injection"
   orgIdentifier: testprameet
   projectIdentifier: testproj
   pipeline:
@@ -10,9 +10,9 @@ inputSet:
       - name: target_branch
         type: String
         value: scenario/sast-injection
-      - name: run_ci
+      - name: force_all
         type: String
-        value: "true"
+        value: "false"
       - name: outdated_test_policy
         type: String
         value: warn

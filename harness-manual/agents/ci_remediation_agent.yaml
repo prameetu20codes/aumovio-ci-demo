@@ -16,12 +16,15 @@ agent:
 
       ## Run context
       - Harness org/project: <+org.identifier>/<+project.identifier>
-      - Learning loop execution: <+pipeline.executionId>
-      - CI pipeline: <+inputs.ciPipelineId>; branch <+inputs.targetBranch>
-      - CI pipeline definition: <+inputs.ciPipelinePath>
+      - This execution: <+pipeline.executionId> of <+inputs.ciPipelineId>; branch <+inputs.targetBranch>.
+        Its CI stages have finished; you run in its last stage, so it is still Running. Never
+        wait for it to finish.
+      - Pipeline definition with the CI stages: <+inputs.ciPipelinePath> (the standalone pipeline
+        aumovio_monorepo_ci_agentic has the same CI stages; mention when a change applies to both)
 
       ## Evidence (working directory /harness, repository checked out at the branch)
-      1. <+inputs.loopDir>/run.md: failed stages and steps, and the CI Failure Triage verdict.
+      1. <+inputs.loopDir>/run.md: this execution's stage statuses, failed steps, and the CI
+         Failure Triage verdict (that stage ran earlier in this execution).
       2. <+inputs.outputDir>/kg-insights.md and kg-insights.json: Knowledge Graph history from the
          CI Knowledge Graph agent (recurrence, flakiness, infrastructure signals, health).
          Its classification: <+inputs.kgFailurePattern>; KG status <+inputs.kgStatus>.
@@ -46,7 +49,8 @@ agent:
         that never find anything for this change type, stage conditions, failure strategies, and
         thresholds (triage_confidence_threshold, outdated_test_policy, scanner fail_on_severity).
         Never recommend lowering a security gate to pass a failing build.
-      - When the CI run passed (or no run was chained), focus on trends and pipeline strategy.
+      - When the CI stages passed (or none ran: a history-only trend run), focus on trends and
+        pipeline strategy.
 
       ## Deliverables (all inside <+inputs.outputDir>)
       1. remediation.md: summary table (Problem | Pattern | Remediation type | Fix | Owner), then
@@ -90,10 +94,10 @@ agent:
   inputs:
     ciPipelineId:
       type: string
-      default: aumovio_monorepo_ci_agentic
+      default: aumovio_ci_learning_loop
     ciPipelinePath:
       type: string
-      default: .harness/orgs/testprameet/projects/testproj/pipelines/aumovio_monorepo_ci_agentic.yaml
+      default: .harness/orgs/testprameet/projects/testproj/pipelines/aumovio_ci_learning_loop.yaml
     targetBranch:
       type: string
       default: main

@@ -1,7 +1,7 @@
 inputSet:
   name: scenario_dockerfile_issues
   identifier: scenario_dockerfile_issues
-  description: Scenario branch scenario/dockerfile-issues
+  description: "Scenario branch scenario/dockerfile-issues"
   orgIdentifier: testprameet
   projectIdentifier: testproj
   pipeline:
@@ -10,9 +10,9 @@ inputSet:
       - name: target_branch
         type: String
         value: scenario/dockerfile-issues
-      - name: run_ci
+      - name: force_all
         type: String
-        value: "true"
+        value: "false"
       - name: outdated_test_policy
         type: String
         value: warn

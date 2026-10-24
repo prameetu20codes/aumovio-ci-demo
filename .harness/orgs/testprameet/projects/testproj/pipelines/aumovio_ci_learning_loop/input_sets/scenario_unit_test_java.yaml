@@ -1,7 +1,7 @@
 inputSet:
   name: scenario_unit_test_java
   identifier: scenario_unit_test_java
-  description: Scenario branch scenario/unit-test-java
+  description: "Scenario branch scenario/unit-test-java"
   orgIdentifier: testprameet
   projectIdentifier: testproj
   pipeline:
@@ -10,9 +10,9 @@ inputSet:
       - name: target_branch
         type: String
         value: scenario/unit-test-java
-      - name: run_ci
+      - name: force_all
         type: String
-        value: "true"
+        value: "false"
       - name: outdated_test_policy
         type: String
         value: warn
