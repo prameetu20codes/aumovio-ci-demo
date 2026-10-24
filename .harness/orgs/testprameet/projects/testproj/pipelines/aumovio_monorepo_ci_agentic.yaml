@@ -1441,10 +1441,10 @@ pipeline:
                         cat "$AGENT_DIR/output/ci-fix.patch"
                       fi
                     envVariables:
-                      FAILURE_CATEGORY: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_agent_1.output.outputVariables.FAILURE_CATEGORY>
-                      CONFIDENCE: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_agent_1.output.outputVariables.CONFIDENCE>
-                      ROOT_CAUSE: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_agent_1.output.outputVariables.ROOT_CAUSE>
-                      SUSPECT_FILES: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_agent_1.output.outputVariables.SUSPECT_FILES>
+                      FAILURE_CATEGORY: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.FAILURE_CATEGORY>
+                      CONFIDENCE: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.CONFIDENCE>
+                      ROOT_CAUSE: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.ROOT_CAUSE>
+                      SUSPECT_FILES: <+execution.steps.triage_ci_failure.steps.ca_ci_failure_triage_1.output.outputVariables.SUSPECT_FILES>
                   when:
                     stageStatus: All
                   timeout: 5m

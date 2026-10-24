@@ -1,6 +1,6 @@
 # Worker Agent: CI Failure Triage
 # Create in AI > Worker Agents > + Create > YAML tab (project testprameet/testproj).
-#   Name: CI Failure Triage Agent    Identifier: ca_ci_failure_triage_agent    Version: 1.0.0
+#   Name: CI Failure Triage Agent    Identifier: ca_ci_failure_triage    Version: 1.0.0
 # Used by pipeline aumovio_monorepo_ci_agentic, stage ci_failure_triage, step triage_ci_failure.
 # Runs only when the pipeline has failed. Diagnoses and proposes a fix; never changes code.
 agent:
